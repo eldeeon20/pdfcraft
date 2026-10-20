@@ -5,6 +5,8 @@ catalogue; frontends never reach past it into the parsing, rendering or editing 
 
 - **Layer:** L6. It depends on most of L1–L4 and on nothing above itself. **No UI toolkit** —
   `egui`, `winit`, `eframe` and `rfd` are forbidden below L7, and `xtask layers` enforces it.
+  `rfd` reaches the shell under the alias `rfd_native` (see `crates/ui-egui/src/rfd.rs`); the
+  Android runner stands in for it with an in-app picker (`apps/pdfcraft-android`).
 - The crate denies `unwrap`/`expect`/`panic!`/`todo!`. Entry points that run untrusted-document
   code keep a last-resort `catch_unwind` guard so an escaped panic becomes an error and the user
   keeps their document.

@@ -8,6 +8,7 @@ use egui::{Align, Layout};
 use pdfcraft_engine::DocId;
 use pdfcraft_engine::ocr::{LANGUAGES, OcrPage, OcrSettings};
 
+use crate::rfd;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
 

@@ -2765,6 +2765,61 @@ usage = "Runtime window/Dock icon on macOS (apps/pdfcraft/src/main.rs)"
 sha256 = "da577d3f21fbcf5c739067787a9e683be2b064d76813b5d5fec9074a7a106538"
 
 [[asset]]
+path = "apps/pdfcraft-android/res/mipmap-mdpi/ic_launcher.png"
+title = "PdfCraft Android launcher icon, 48 px (mdpi)"
+author = "PdfCraft contributors (rendered from assets/app-icon/pdfcraft-1024.png)"
+source = "Contributor-original (see assets/app-icon/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "assets/app-icon/LICENSE.txt"
+kind = "icon"
+usage = "Android launcher icon at mdpi density (apps/pdfcraft-android)"
+sha256 = "2568016f06cebafdbfc380f78a12bd847955c40c2dae33cb9af703ab6a77defc"
+
+[[asset]]
+path = "apps/pdfcraft-android/res/mipmap-hdpi/ic_launcher.png"
+title = "PdfCraft Android launcher icon, 72 px (hdpi)"
+author = "PdfCraft contributors (rendered from assets/app-icon/pdfcraft-1024.png)"
+source = "Contributor-original (see assets/app-icon/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "assets/app-icon/LICENSE.txt"
+kind = "icon"
+usage = "Android launcher icon at hdpi density (apps/pdfcraft-android)"
+sha256 = "417a145529f5d945b42e10bbed6d20913b34dac1424ddc33fb9fca2eea7f3700"
+
+[[asset]]
+path = "apps/pdfcraft-android/res/mipmap-xhdpi/ic_launcher.png"
+title = "PdfCraft Android launcher icon, 96 px (xhdpi)"
+author = "PdfCraft contributors (rendered from assets/app-icon/pdfcraft-1024.png)"
+source = "Contributor-original (see assets/app-icon/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "assets/app-icon/LICENSE.txt"
+kind = "icon"
+usage = "Android launcher icon at xhdpi density (apps/pdfcraft-android)"
+sha256 = "dfe4af22de582407b334f14cbcf32a116b104a67c0f754b344776c7841c3d9ca"
+
+[[asset]]
+path = "apps/pdfcraft-android/res/mipmap-xxhdpi/ic_launcher.png"
+title = "PdfCraft Android launcher icon, 144 px (xxhdpi)"
+author = "PdfCraft contributors (rendered from assets/app-icon/pdfcraft-1024.png)"
+source = "Contributor-original (see assets/app-icon/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "assets/app-icon/LICENSE.txt"
+kind = "icon"
+usage = "Android launcher icon at xxhdpi density (apps/pdfcraft-android)"
+sha256 = "91a5d85932fcbc521837b2f4c6c023b9601b9038998c1620cfe099f98e26611c"
+
+[[asset]]
+path = "apps/pdfcraft-android/res/mipmap-xxxhdpi/ic_launcher.png"
+title = "PdfCraft Android launcher icon, 192 px (xxxhdpi)"
+author = "PdfCraft contributors (rendered from assets/app-icon/pdfcraft-1024.png)"
+source = "Contributor-original (see assets/app-icon/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "assets/app-icon/LICENSE.txt"
+kind = "icon"
+usage = "Android launcher icon at xxxhdpi density (apps/pdfcraft-android)"
+sha256 = "b8fce3abef3af65b155b677ebb247a035ceaf2b7f6d4953f55c106142fbeafcc"
+
+[[asset]]
 path = "assets/app-icon/pdfcraft.icns"
 title = "PdfCraft app icon (macOS .icns)"
 author = "PdfCraft contributors (drawn by the project owner in ArtCraft; vectorised with craftrules vectorize_tile.py)"

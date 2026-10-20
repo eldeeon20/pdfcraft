@@ -8,6 +8,7 @@ use pdfcraft_engine::{Edit, FillMark, NewAnnotation, Shape, SignatureImage, Styl
 use pdfcraft_render::{DocInfo, PageInfo};
 
 use crate::canvas::{DocView, PageXform};
+use crate::rfd;
 use crate::theme::Tokens;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

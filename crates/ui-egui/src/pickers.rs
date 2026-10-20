@@ -32,6 +32,7 @@ use pdfcraft_engine::DocId;
 
 use crate::PdfCraftApp;
 use crate::files::{FilePurpose, PickTarget};
+use crate::rfd;
 
 /// What the chosen files are for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

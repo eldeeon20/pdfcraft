@@ -13,6 +13,7 @@ use egui::{Align, Color32, CornerRadius, Layout, Modifiers, Rect, Sense, Stroke,
 use egui_extras::{Column, TableBuilder};
 use pdfcraft_engine::SourceProblem;
 
+use crate::rfd;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, icons, widgets};
 

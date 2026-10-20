@@ -6,6 +6,7 @@ use std::sync::Arc;
 use egui::{Align, Layout};
 use serde::{Deserialize, Serialize};
 
+use crate::rfd;
 use crate::theme::{self, Tokens};
 use crate::{Dialog, PdfCraftApp, QuickTool, widgets};
 

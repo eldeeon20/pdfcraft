@@ -6,6 +6,7 @@ use egui::{Align, Layout};
 use pdfcraft_engine::{CommentProps, Edit, LineEnding, NoteIcon};
 
 use crate::comments::swatch_grid;
+use crate::rfd;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
 

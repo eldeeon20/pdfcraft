@@ -5,6 +5,7 @@
 use egui::{Align, Color32, CornerRadius, Layout, Rect, Stroke, pos2, vec2};
 use pdfcraft_engine::{Background, Edit, HeaderFooter, MarkKind, Watermark};
 
+use crate::rfd;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
 

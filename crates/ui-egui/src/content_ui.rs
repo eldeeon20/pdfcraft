@@ -8,6 +8,7 @@ use pdfcraft_engine::{Added, AddedContent, AddedText, Edit, FontFamily, TextAlig
 use pdfcraft_render::DocInfo;
 
 use crate::canvas::{DocView, PageXform};
+use crate::rfd;
 use crate::theme::Tokens;
 use crate::widgets;
 

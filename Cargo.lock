@@ -3599,6 +3599,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdfcraft-android"
+version = "0.5.0"
+dependencies = [
+ "android-activity",
+ "eframe",
+ "egui",
+ "log",
+ "pdfcraft-ui-egui",
+]
+
+[[package]]
 name = "pdfcraft-cli"
 version = "0.5.0"
 dependencies = [

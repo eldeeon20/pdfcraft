@@ -1,0 +1,292 @@
+//! Android mobile shell: the top action bar, full-screen escape and the in-app file picker.
+//!
+//! rfd has no Android backend, so the `rfd::` shim in ui-egui queues each desktop picker as a
+//! [`PendingPick`], which the in-app picker here renders and answers: `pickers.rs` waits for the
+//! reply on a worker thread and uses the chosen paths on the next frame like any other pick.
+//! Files are read and written through the file system, so opening a PDF outside the app sandbox
+//! needs "All files access" (Settings ▸ Apps ▸ PdfCraft); until it is granted the picker says so.
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use egui::{Align, Align2, Frame, Margin, RichText, ScrollArea, Stroke, vec2};
+use pdfcraft_ui_egui::theme::Tokens;
+use pdfcraft_ui_egui::{PdfCraftApp, SaveTarget};
+use pdfcraft_ui_egui::rfd::{PendingKind, PendingPick, take_pending};
+
+/// Overlays and window state shared between the runner's frames.
+#[derive(Default)]
+pub struct MobileState {
+    pub full_screen: bool,
+    picker: Option<Picker>,
+}
+
+pub type SharedMobileState = Arc<Mutex<MobileState>>;
+
+/// One pending pick being shown; dropped when the pick is answered.
+struct Picker {
+    pending: PendingPick,
+    dir: PathBuf,
+    /// The current folder's folders and the files this pick's filters allow, folders first.
+    entries: Vec<(String, bool)>,
+    listing_err: Option<String>,
+    chosen: Vec<String>,
+    file_name: String,
+}
+
+/// Phone-scale widgets: bigger touch targets (photocraft's Android PR does the same).
+pub fn configure_mobile_style(style: &mut egui::Style) {
+    style.interact_size = vec2(44.0, 38.0);
+}
+
+/// The action bar: Open, Save and the reading toggles.
+pub fn render_action_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui, state: &mut MobileState) {
+    let ctx = ui.ctx().clone();
+    let t = Tokens::get(&ctx);
+    egui::Panel::top("pdfcraft_mobile_action_bar")
+        .exact_size(44.0)
+        .frame(Frame::NONE.fill(t.panel).inner_margin(Margin::symmetric(10, 4)))
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+                bar_button(ui, &t, "📂 Open", || app.open_dialog());
+                bar_button(ui, &t, "💾 Save", || save_active(app));
+                bar_button(ui, &t, "☰ Panel", || app.left_open = !app.left_open);
+                bar_button(ui, &t, "⛶ Full", || set_full_screen(app, &ctx, state, true));
+            });
+        });
+}
+
+/// File ▸ Save. PdfCraft itself reports save failures and asks where (the picker shows there).
+fn save_active(app: &mut PdfCraftApp) {
+    app.save_active(SaveTarget::InPlace);
+}
+
+fn bar_button(ui: &mut egui::Ui, t: &Tokens, label: &str, action: impl FnOnce()) {
+    let button = egui::Button::new(RichText::new(label).color(t.text))
+        .fill(t.panel)
+        .min_size(vec2(0.0, 36.0));
+    if ui.add(button).clicked() {
+        action();
+    }
+}
+
+/// Enter or leave full-screen reading (Acrobat: View ▸ Full Screen Mode).
+pub fn set_full_screen(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState, on: bool) {
+    state.full_screen = on;
+    app.set_full_screen(ctx, on);
+}
+
+/// A way out of full-screen reading (the action bar is hidden there).
+pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState) {
+    egui::Area::new(egui::Id::new("pdfcraft_fullscreen_exit"))
+        .anchor(Align2::RIGHT_BOTTOM, [-14.0, -14.0])
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            if ui.add(egui::Button::new("⤢ Window").min_size(vec2(0.0, 36.0))).clicked() {
+                set_full_screen(app, ctx, state, false);
+            }
+        });
+}
+
+/// Shows and answers the queued rfd picks, one at a time.
+pub fn render_picker(ctx: &egui::Context, state: &mut MobileState) {
+    if state.picker.is_none() {
+        if let Some(pending) = take_pending() {
+            state.picker = Some(Picker::new(pending));
+        }
+        return;
+    }
+    let Some(mut picker) = state.picker.take() else { return };
+    let t = Tokens::get(ctx);
+    let mut answered = false;
+    egui::Window::new(picker.title())
+        .open(&mut answered)
+        .collapsible(false)
+        .resizable(false)
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        .fixed_size(vec2(ctx.content_rect().width().min(420.0), ctx.content_rect().height().min(520.0)))
+        .frame(Frame::NONE.fill(t.card).stroke(Stroke::new(1.0, t.border)).inner_margin(Margin::same(10)))
+        .show(ctx, |ui| picker.body(ui));
+    if !answered {
+        picker.answer(None);
+    } else {
+        state.picker = Some(picker);
+        ctx.request_repaint();
+    }
+}
+
+impl Picker {
+    fn new(pending: PendingPick) -> Self {
+        let file_name = pending.file_name.clone().unwrap_or_default();
+        let mut me = Self { pending, dir: default_dir(), entries: Vec::new(), listing_err: None, chosen: Vec::new(), file_name };
+        me.list();
+        me
+    }
+
+    /// The in-app dialog's heading.
+    fn title(&self) -> String {
+        match &self.pending.kind {
+            PendingKind::Files { .. } => self.pending.title.clone().unwrap_or_else(|| "Choose a file".into()),
+            PendingKind::Folder => self.pending.title.clone().unwrap_or_else(|| "Choose a folder".into()),
+            PendingKind::Save => self.pending.title.clone().unwrap_or_else(|| "Save as".into()),
+        }
+    }
+
+    /// Whether a file name passes this pick's filters (folder and save picks take everything).
+    fn allowed(&self, name: &str) -> bool {
+        if matches!(self.pending.kind, PendingKind::Folder | PendingKind::Save) {
+            return false;
+        }
+        let ext_of = |name: &str| Path::new(name).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        self.pending.filters.is_empty() || self.pending.filters.iter().any(|(_, exts)| exts.iter().any(|e| *e == ext_of(name)))
+    }
+
+    /// Reads `dir` into `entries`: folders first, then files, each alphabetically.
+    fn list(&mut self) {
+        self.entries.clear();
+        self.listing_err = None;
+        match std::fs::read_dir(&self.dir) {
+            Ok(dir) => {
+                let mut directories = Vec::new();
+                let mut files = Vec::new();
+                for entry in dir.flatten() {
+                    let is_dir = entry.file_type().map(|f| f.is_dir()).unwrap_or(false);
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    if is_dir {
+                        directories.push(name);
+                    } else if self.allowed(&name) {
+                        files.push(name);
+                    }
+                }
+                directories.sort();
+                files.sort();
+                self.entries = directories.into_iter().map(|n| (n, true)).chain(files.into_iter().map(|n| (n, false))).collect();
+            }
+            Err(e) => {
+                self.listing_err = Some(format!(
+                    "PdfCraft can't read {folder}: grant it \"All files access\" in Settings ▸ Apps ▸ PdfCraft.",
+                    folder = self.dir.display()
+                ));
+                log::warn!("reading {}: {e}", self.dir.display());
+            }
+        }
+        self.chosen.retain(|name| Path::new(&name).is_file());
+    }
+
+    fn answer(self, paths: Option<Vec<PathBuf>>) {
+        self.pending.reply.send(paths);
+    }
+
+    fn body(&mut self, ui: &mut egui::Ui) {
+        let t = Tokens::get(ui.ctx());
+        let multiple = matches!(self.pending.kind, PendingKind::Files { multiple: true });
+
+        // The current folder and the way up.
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(self.dir.display().to_string()).color(t.text_muted).small());
+            if ui.add(egui::Button::new("⬆").min_size(vec2(0.0, 32.0))).clicked() {
+                if let Some(parent) = self.dir.parent() {
+                    self.dir = parent.to_path_buf();
+                    self.list();
+                }
+            }
+        });
+
+        // The folders everyone knows first: Downloads, Documents, Pictures.
+        for (label, dir) in shortcuts() {
+            if !dir.is_dir() {
+                continue;
+            }
+            if ui.add(egui::Button::new(RichText::new(label).color(t.accent).small())).clicked() {
+                self.dir = dir;
+                self.list();
+            }
+        }
+        ui.separator();
+
+        if let Some(err) = &self.listing_err {
+            ui.label(RichText::new(err).color(t.accent_text).small());
+        }
+
+        let mut navigated = false;
+        ScrollArea::vertical().max_height(ui.available_height() - 96.0).auto_shrink([false; 2]).show(ui, |ui| {
+            for (name, is_dir) in self.entries.clone() {
+                let text = if is_dir { format!("📁 {name}") } else { name.clone() };
+                let selected = self.chosen.contains(&name);
+                if ui.selectable_label(selected, RichText::new(text).color(t.text)).clicked() {
+                    if is_dir {
+                        self.dir = self.dir.join(name);
+                        self.chosen.clear();
+                        self.list();
+                        navigated = true;
+                        break;
+                    } else if multiple {
+                        if selected {
+                            self.chosen.retain(|c| *c != name);
+                        } else {
+                            self.chosen.push(name.clone());
+                        }
+                    } else {
+                        self.chosen = vec![name.clone()];
+                    }
+                }
+            }
+        });
+        if navigated {
+            return;
+        }
+
+        match self.pending.kind {
+            PendingKind::Files { multiple } => {
+                let label = if multiple && self.chosen.len() > 1 { format!("Open {} files", self.chosen.len()) } else { "Open".into() };
+                if !multiple {
+                    self.chosen.truncate(1);
+                }
+                if ui.add_enabled(!self.chosen.is_empty(), egui::Button::new(label)).clicked() {
+                    let paths = self.chosen.iter().map(|n| self.dir.join(n)).collect::<Vec<_>>();
+                    self.answer(Some(paths));
+                }
+            }
+            PendingKind::Folder => {
+                let hint = self.chosen.first().map(|n| self.dir.join(n)).unwrap_or_else(|| self.dir.clone());
+                let name = hint.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| hint.display().to_string());
+                if ui.add(egui::Button::new(format!("Choose {name}")).min_size(vec2(0.0, 36.0))).clicked() {
+                    self.answer(Some(vec![hint]));
+                }
+            }
+            PendingKind::Save => {
+                ui.add(egui::TextEdit::singleline(&mut self.file_name).hint_text("File name"));
+                if ui.add_enabled(!self.file_name.trim().is_empty(), egui::Button::new("Save")).clicked() {
+                    let name = self.file_name.trim().to_string();
+                    self.answer(Some(vec![self.dir.join(name)]));
+                }
+            }
+        }
+        if ui.add(egui::Button::new("Cancel")).clicked() {
+            self.answer(None);
+        }
+    }
+}
+
+/// The storage shortcuts, where most documents live on a phone.
+fn shortcuts() -> Vec<(&'static str, PathBuf)> {
+    let storage = PathBuf::from("/storage/emulated/0");
+    vec![("Download", storage.join("Download")), ("Documents", storage.join("Documents")), ("Pictures", storage.join("Pictures"))]
+}
+
+/// `/storage/emulated/0/Download` on the common Android installs; `/storage` when it isn't there.
+fn default_dir() -> PathBuf {
+    let storage = PathBuf::from("/storage/emulated/0");
+    let download = storage.join("Download");
+    if download.is_dir() {
+        return download;
+    }
+    if storage.is_dir() {
+        return storage;
+    }
+    PathBuf::from("/")
+}

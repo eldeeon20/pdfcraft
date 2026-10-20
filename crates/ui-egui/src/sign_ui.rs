@@ -9,6 +9,7 @@ use pdfcraft_engine::sign::{self, Appearance, Certificate, DigitalId, Modificati
 use pdfcraft_engine::{SignOptions, SignatureInfo, SignatureStatus};
 
 use crate::canvas::{DocView, PageXform};
+use crate::rfd;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, icons, widgets};
 

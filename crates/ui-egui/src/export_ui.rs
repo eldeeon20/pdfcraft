@@ -9,6 +9,7 @@ use egui::{Align, Layout};
 use pdfcraft_engine::export::{ExportSource, Exporter, ImageFormat};
 
 use crate::marks_ui::PageRange;
+use crate::rfd;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
 

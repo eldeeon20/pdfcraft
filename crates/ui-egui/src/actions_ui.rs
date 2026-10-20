@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use egui::{Align, Layout};
 use pdfcraft_engine::actions::{Action, Step, builtin};
 
+use crate::rfd;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
 

@@ -26,7 +26,14 @@ mod mobile {
         pub title: Option<String>,
         pub file_name: Option<String>,
         pub filters: Vec<(String, Vec<String>)>,
-        pub reply: Replier,
+        reply: Replier,
+    }
+
+    impl PendingPick {
+        /// Delivers the picker's result; a later call is ignored (the slot was answered once).
+        pub fn answer(&self, paths: Option<Vec<PathBuf>>) {
+            self.reply.send(paths);
+        }
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,7 +117,7 @@ mod mobile {
     struct Replier(Reply);
 
     impl Replier {
-        pub fn send(self, paths: Option<Vec<PathBuf>>) {
+        pub fn send(&self, paths: Option<Vec<PathBuf>>) {
             let Share { value, waker } = &*self.0;
             {
             let mut value = value.lock().unwrap_or_else(PoisonError::into_inner);

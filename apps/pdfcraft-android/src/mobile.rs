@@ -32,6 +32,7 @@ struct Picker {
     listing_err: Option<String>,
     chosen: Vec<String>,
     file_name: String,
+    answered: bool,
 }
 
 /// Phone-scale widgets: bigger touch targets (photocraft's Android PR does the same).
@@ -98,9 +99,9 @@ pub fn render_picker(ctx: &egui::Context, state: &mut MobileState) {
     }
     let Some(mut picker) = state.picker.take() else { return };
     let t = Tokens::get(ctx);
-    let mut answered = false;
+    let mut open = true;
     egui::Window::new(picker.title())
-        .open(&mut answered)
+        .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .order(egui::Order::Foreground)
@@ -108,8 +109,13 @@ pub fn render_picker(ctx: &egui::Context, state: &mut MobileState) {
         .fixed_size(vec2(ctx.content_rect().width().min(420.0), ctx.content_rect().height().min(520.0)))
         .frame(Frame::NONE.fill(t.card).stroke(Stroke::new(1.0, t.border)).inner_margin(Margin::same(10)))
         .show(ctx, |ui| picker.body(ui));
-    if !answered {
+    if !open {
+        // The dialog's close button: a cancel.
         picker.answer(None);
+    }
+    if picker.answered {
+        // Let the awaiting worker thread see the result and the app act on the pick.
+        ctx.request_repaint();
     } else {
         state.picker = Some(picker);
         ctx.request_repaint();
@@ -119,7 +125,7 @@ pub fn render_picker(ctx: &egui::Context, state: &mut MobileState) {
 impl Picker {
     fn new(pending: PendingPick) -> Self {
         let file_name = pending.file_name.clone().unwrap_or_default();
-        let mut me = Self { pending, dir: default_dir(), entries: Vec::new(), listing_err: None, chosen: Vec::new(), file_name };
+        let mut me = Self { pending, dir: default_dir(), entries: Vec::new(), listing_err: None, chosen: Vec::new(), file_name, answered: false };
         me.list();
         me
     }
@@ -177,8 +183,12 @@ impl Picker {
         self.chosen.retain(|name| Path::new(&name).is_file());
     }
 
-    fn answer(self, paths: Option<Vec<PathBuf>>) {
-        self.pending.reply.send(paths);
+    fn answer(&mut self, paths: Option<Vec<PathBuf>>) {
+        if self.answered {
+            return;
+        }
+        self.answered = true;
+        self.pending.answer(paths);
     }
 
     fn body(&mut self, ui: &mut egui::Ui) {
@@ -249,6 +259,7 @@ impl Picker {
                 if ui.add_enabled(!self.chosen.is_empty(), egui::Button::new(label)).clicked() {
                     let paths = self.chosen.iter().map(|n| self.dir.join(n)).collect::<Vec<_>>();
                     self.answer(Some(paths));
+                    return;
                 }
             }
             PendingKind::Folder => {
@@ -256,6 +267,7 @@ impl Picker {
                 let name = hint.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| hint.display().to_string());
                 if ui.add(egui::Button::new(format!("Choose {name}")).min_size(vec2(0.0, 36.0))).clicked() {
                     self.answer(Some(vec![hint]));
+                    return;
                 }
             }
             PendingKind::Save => {
@@ -263,11 +275,13 @@ impl Picker {
                 if ui.add_enabled(!self.file_name.trim().is_empty(), egui::Button::new("Save")).clicked() {
                     let name = self.file_name.trim().to_string();
                     self.answer(Some(vec![self.dir.join(name)]));
+                    return;
                 }
             }
         }
         if ui.add(egui::Button::new("Cancel")).clicked() {
             self.answer(None);
+            return;
         }
     }
 }

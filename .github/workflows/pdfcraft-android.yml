@@ -71,7 +71,13 @@ jobs:
       - name: Build the APK (release)
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: cargo apk build -p pdfcraft-android --target ${{ matrix.target }} --release
+          # cargo-apk signs `release` only with an explicit keystore (env, since 0.9.x): a
+          # per-run one keeps private keys out of the repository.
+          CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/pdfcraft-ci.keystore
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: pdfcraft-ci
+        run: |
+          keytool -genkeypair -v -keystore "$CARGO_APK_RELEASE_KEYSTORE" -storepass "$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" -keypass "$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" -alias pdfcraft-ci -dname "CN=PdfCraft CI, O=PdfCraft, C=US" -keyalg RSA -keysize 2048 -validity 10000
+          cargo apk build -p pdfcraft-android --target ${{ matrix.target }} --release
 
       - name: Stage the APK
         run: |

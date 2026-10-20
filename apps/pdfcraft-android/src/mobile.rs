@@ -36,7 +36,7 @@ struct Picker {
 
 /// Phone-scale widgets: bigger touch targets (photocraft's Android PR does the same).
 pub fn configure_mobile_style(style: &mut egui::Style) {
-    style.interact_size = vec2(44.0, 38.0);
+    style.spacing.interact_size = vec2(44.0, 38.0);
 }
 
 /// The action bar: Open, Save and the reading toggles.

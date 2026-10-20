@@ -23,12 +23,13 @@ jobs:
         include:
           - target: aarch64-linux-android
             name: arm64-v8a
-          - target: x86_64-linux-android
-            name: x86_64
-          - target: armv7-linux-androideabi
-            name: armeabi-v7a
-          - target: i686-linux-android
-            name: x86
+          # Other architectures only if an emulator/emulated device or an old tablet is needed:
+          # - target: x86_64-linux-android
+          #   name: x86_64
+          # - target: armv7-linux-androideabi
+          #   name: armeabi-v7a
+          # - target: i686-linux-android
+          #   name: x86
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

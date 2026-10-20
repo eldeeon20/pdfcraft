@@ -113,8 +113,8 @@ mod mobile {
         pub fn send(self, paths: Option<Vec<PathBuf>>) {
             let Share { value, waker } = &*self.0;
             {
-                let mut value = value.lock().unwrap_or_else(PoisonError::into_inner);
-                *value = paths;
+            let mut value = value.lock().unwrap_or_else(PoisonError::into_inner);
+            *value = Some(paths);
             }
             let waker = {
                 let mut waker = waker.lock().unwrap_or_else(PoisonError::into_inner);

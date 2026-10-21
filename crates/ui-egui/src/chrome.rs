@@ -305,8 +305,11 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         }
                     });
                     ui.add_space(8.0);
-                    if widgets::search_box(ui, tl!("Find tools and commands"), 260.0).clicked() {
-                        app.palette_open = true;
+                    if ui.available_width() >= 200.0 {
+                        let width = (260.0_f32).min(ui.available_width() * 0.75);
+                        if widgets::search_box(ui, tl!("Find tools and commands"), width).clicked() {
+                            app.palette_open = true;
+                        }
                     }
                 });
             });
@@ -393,6 +396,12 @@ fn main_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 }
             });
         });
+        let key = crate::commands::command_shortcut_label(ui.ctx(), "view.palette");
+        if widgets::menu_item(ui, tl!("Find tools and commands"), &key).clicked() {
+            ui.close();
+            app.execute("view.palette");
+            return;
+        }
         ui.menu_button(tl!("Help"), |ui| crate::commands::registry_menu(app, ui, "Help"));
     });
 }

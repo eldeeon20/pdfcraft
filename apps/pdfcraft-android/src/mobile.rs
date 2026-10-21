@@ -222,7 +222,8 @@ impl Picker {
             ui.label(RichText::new(err).color(t.accent_text).small());
         }
         if !all_files_access() && self.dir.starts_with("/storage/emulated/0/") {
-            ui.label(RichText::new("This folder also holds PDFs from other apps, hidden until PdfCraft has \"All files access\" (Settings ▸ Apps ▸ PdfCraft).").color(t.text_muted).small());
+            let hidden = "Other apps' PDFs stay hidden until PdfCraft has \"All files access\" (Settings ▸ Apps ▸ PdfCraft).";
+            ui.label(RichText::new(hidden).color(t.text_muted).small());
         }
 
         let mut navigated = false;

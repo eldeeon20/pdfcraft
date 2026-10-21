@@ -221,6 +221,9 @@ impl Picker {
         if let Some(err) = &self.listing_err {
             ui.label(RichText::new(err).color(t.accent_text).small());
         }
+        if !all_files_access() && self.dir.starts_with("/storage/emulated/0/") {
+            ui.label(RichText::new("This folder also holds PDFs from other apps, hidden until PdfCraft has \"All files access\" (Settings ▸ Apps ▸ PdfCraft).").color(t.text_muted).small());
+        }
 
         let mut navigated = false;
         ScrollArea::vertical().max_height(ui.available_height() - 96.0).auto_shrink([false; 2]).show(ui, |ui| {
@@ -284,6 +287,12 @@ impl Picker {
             return;
         }
     }
+}
+
+/// The FUSE daemon keeps `/storage/emulated/0/Android/data` (other apps' data) behind "All files
+/// access"; a readable listing there means PdfCraft has it and can see every PDF on shared storage.
+fn all_files_access() -> bool {
+    std::fs::read_dir("/storage/emulated/0/Android/data").map(|mut d| d.next().is_some()).unwrap_or(false)
 }
 
 /// The storage shortcuts, where most documents live on a phone.

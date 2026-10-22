@@ -1,0 +1,63 @@
+name: android-kotlin-apk
+
+# Builds the APK with the original egui UI plus Kotlin support. It never compiles Rust:
+# libpdfcraft_android.so comes prebuilt from Release android-core-v1.
+
+on:
+  push:
+    branches:
+      - android-kotlin
+    paths:
+      - "apps/pdfcraft-android/android/**"
+      - ".github/workflows/android-kotlin-apk.yml"
+    tags:
+      - "apk-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      APP: apps/pdfcraft-android/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Ensure the Android SDK and platform 35
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" >/dev/null
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Download the prebuilt core (Release android-core-v1)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dir="$APP/app/src/main/jniLibs/arm64-v8a"
+          mkdir -p "$dir"
+          gh release download android-core-v1 -D "$dir" --clobber
+          ls -l "$dir"
+          test -f "$dir/libpdfcraft_android.so"
+      - name: Build the APK (release)
+        working-directory: ${{ env.APP }}
+        run: |
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/pdfcraft-ci.keystore" \
+            -storepass pdfcraft-ci -keypass pdfcraft-ci -alias pdfcraft-ci \
+            -dname "CN=PdfCraft CI, O=PdfCraft, C=US" -keyalg RSA -keysize 2048 -validity 10000
+          gradle assembleRelease -PpdfcraftStoreFile="$RUNNER_TEMP/pdfcraft-ci.keystore" --no-daemon
+        env:
+          PDFCRAFT_KEYSTORE_PASSWORD: pdfcraft-ci
+          PDFCRAFT_KEY_ALIAS: pdfcraft-ci
+          PDFCRAFT_KEY_PASSWORD: pdfcraft-ci
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcraft-android-kotlin-arm64-apk
+          path: ${{ env.APP }}/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error

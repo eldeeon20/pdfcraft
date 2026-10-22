@@ -35,6 +35,12 @@ pub fn start(android_app: android_activity::AndroidApp) {
             if let Some(json) = cc.storage.as_ref().and_then(|s| s.get_string("pdfcraft")) {
                 app.restore(&json);
             }
+            // A PDF chosen with the system picker (Kotlin side) is dropped here before the
+            // UI starts, so the original shell just opens it like any recent document.
+            if let Some(dir) = internal_path.as_deref() {
+                open_pending_pick(dir, &mut app);
+            }
+
             cc.egui_ctx.global_style_mut(mobile::configure_mobile_style);
 
             // A collapsed left panel and a plain viewport fit a phone; the action bar comes
@@ -90,5 +96,16 @@ impl eframe::App for MobileShell {
         if state.full_screen {
             mobile::render_fullscreen_exit(&mut self.app, &ctx, &mut state);
         }
+    }
+}
+
+/// Opens (once) the document a SAF pick left for us in the app sandbox.
+fn open_pending_pick(dir: &std::path::Path, app: &mut PdfCraftApp) {
+    let marker = dir.join("PdfCraft").join("pending_open.txt");
+    let Ok(path) = std::fs::read_to_string(&marker) else { return; };
+    let _ = std::fs::remove_file(&marker);
+    let path = path.trim();
+    if !path.is_empty() {
+        app.open_path(path);
     }
 }

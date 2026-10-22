@@ -1,0 +1,44 @@
+name: ffi-core (build the Rust .so)
+
+# Builds the Rust engine for Android arm64 and publishes it to Release
+# ffi-core-v1. The APK workflow consumes that Release and never compiles Rust.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain with the Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Cache the Rust build
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+      - name: Build the engine (arm64-v8a)
+        run: |
+          ndk="${ANDROID_NDK_LATEST_HOME:-$(ls -d /usr/local/lib/android/sdk/ndk/* | sort -V | tail -1)}"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          cargo ndk -t arm64-v8a -o /tmp/jniLibs build --release -p pdfcraft-ffi
+          ls -la /tmp/jniLibs/arm64-v8a/
+      - name: Publish to Release ffi-core-v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          so_dir=/tmp/jniLibs/arm64-v8a
+          count=$(ls "$so_dir/"*.so | wc -l)
+          echo "so files: $count"
+          test "$count" -ge 4
+          gh release delete ffi-core-v1 -y >/dev/null 2>&1 || true
+          gh release create ffi-core-v1 --title "Prebuilt Rust core (arm64)" \
+            --notes "libpdfcraft_ffi.so + dependency .so (OCR, boa, rten) for Android arm64. Built by the ffi-core workflow; consumed by pdfcraft-flutter (APK only)."
+          gh release upload ffi-core-v1 "$so_dir/"*.so --clobber

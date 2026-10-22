@@ -380,6 +380,9 @@ pub struct PdfCraftApp {
     pub left: LeftPanel,
     pub left_open: bool,
     pub right: Option<RightPanel>,
+    /// Acrobat-style auto-open of Comments/Bookmarks after a document loads. Off on phones,
+    /// where that panel covers the page instead of sitting beside it.
+    pub auto_open_panels: bool,
     /// The user closed the Comments panel, so picking a comment tool leaves it closed until they
     /// open it again (#225). Remembered across restarts.
     pub comments_panel_closed: bool,
@@ -663,6 +666,7 @@ impl PdfCraftApp {
             left: LeftPanel::AllTools,
             left_open: true,
             right: None,
+            auto_open_panels: true,
             comments_panel_closed: false,
             quick_tool: QuickTool::Select,
             space_hand: None,
@@ -876,7 +880,7 @@ impl PdfCraftApp {
         let doc = self.session.get(id).ok_or("the document could not be opened")?;
         let pages = doc.info.pages.len();
         // Acrobat opens straight to the Comments panel when a document has comments.
-        if activate && self.right.is_none() {
+        if activate && self.auto_open_panels && self.right.is_none() {
             self.right = if !doc.info.annotations.is_empty() {
                 Some(RightPanel::Comments)
             } else if !doc.info.outline.is_empty() {

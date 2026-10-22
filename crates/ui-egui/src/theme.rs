@@ -2,6 +2,7 @@
 //! one blue accent; Dark Gray keeps pages white). Every custom widget reads `Tokens::get`.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke, Visuals};
 
@@ -224,6 +225,14 @@ pub fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("semibold".into()))
 }
 
+/// Whether the chrome runs on a touch screen (Android): wider scrollbars, no floating overlay.
+static MOBILE: AtomicBool = AtomicBool::new(false);
+
+/// Marks this process as the mobile shell; call once before the first frame.
+pub fn set_mobile(on: bool) {
+    MOBILE.store(on, Ordering::Relaxed);
+}
+
 pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     // egui must use the same theme for popup/menu styles as our custom chrome.
     ctx.set_theme(if kind == ThemeKind::Dark { egui::Theme::Dark } else { egui::Theme::Light });
@@ -271,8 +280,14 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
         s.spacing.button_padding = egui::vec2(10.0, 5.0);
         s.spacing.menu_margin = egui::Margin::same(6);
-        s.spacing.scroll.bar_width = 8.0;
-        s.spacing.scroll.floating = true;
+        let mobile = MOBILE.load(Ordering::Relaxed);
+        // Fingers need a fatter target than a mouse: 14 pt, and it stays put instead of
+        // floating over the page.
+        s.spacing.scroll.bar_width = if mobile { 14.0 } else { 8.0 };
+        s.spacing.scroll.floating = !mobile;
+        if mobile {
+            s.spacing.scroll.handle_min_length = 32.0;
+        }
         s.text_styles.insert(egui::TextStyle::Body, regular(13.0));
         s.text_styles.insert(egui::TextStyle::Button, regular(13.0));
         s.text_styles.insert(egui::TextStyle::Small, regular(11.0));

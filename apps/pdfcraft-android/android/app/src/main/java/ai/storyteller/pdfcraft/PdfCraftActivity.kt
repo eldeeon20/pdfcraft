@@ -20,9 +20,19 @@ import java.io.File
  */
 class PdfCraftActivity : NativeActivity() {
 
+    private var prompting = false
+    private var declined = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) askForStorage()
+        askForStorage()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Coming back from Settings (or from a pick) without the grant: ask again instead of
+        // leaving the user with a picker that can't list Download.
+        askForStorage()
     }
 
     private fun hasStorage(): Boolean =
@@ -33,7 +43,8 @@ class PdfCraftActivity : NativeActivity() {
         }
 
     private fun askForStorage() {
-        if (hasStorage()) return
+        if (prompting || declined || hasStorage()) return
+        prompting = true
         AlertDialog.Builder(this)
             .setTitle("Storage access")
             .setMessage(
@@ -43,7 +54,8 @@ class PdfCraftActivity : NativeActivity() {
             )
             .setPositiveButton("Grant access") { _, _ -> requestStorage() }
             .setNeutralButton("Pick a PDF") { _, _ -> pickPdf() }
-            .setNegativeButton("Not now", null)
+            .setNegativeButton("Not now") { _, _ -> declined = true }
+            .setOnDismissListener { prompting = false }
             .show()
     }
 
@@ -94,7 +106,7 @@ class PdfCraftActivity : NativeActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, results: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, results)
-        if (requestCode == REQ_STORAGE && results.isNotEmpty() && results[0] != PackageManager.PERMISSION_GRANTED) {
+        if (requestCode == REQ_STORAGE && (results.isEmpty() || results[0] != PackageManager.PERMISSION_GRANTED)) {
             askForStorage()
         }
     }

@@ -47,6 +47,11 @@ pub fn start(android_app: android_activity::AndroidApp) {
             // back when full-screen reading ends.
             app.left_open = false;
             app.integrated_titlebar = false;
+            // A phone is not a desktop: comments/bookmarks would cover the page, so they don't
+            // pop open on their own and a restored panel starts closed.
+            app.auto_open_panels = false;
+            app.right = None;
+            pdfcraft_ui_egui::theme::set_mobile(true);
 
             // Autosave unsaved changes; offer to recover documents a crashed session left behind.
             if let Some(dir) = internal_path.clone() {

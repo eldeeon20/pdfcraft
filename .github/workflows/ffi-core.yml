@@ -26,7 +26,10 @@ jobs:
           tool: cargo-ndk
       - name: Build the engine (arm64-v8a)
         run: |
-          ndk="${ANDROID_NDK_LATEST_HOME:-$(ls -d /usr/local/lib/android/sdk/ndk/* | sort -V | tail -1)}"
+          ndk="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ -z "$ndk" ]; then
+            ndk=$(find /usr/local/lib/android/sdk/ndk -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          fi
           echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
           cargo ndk -t arm64-v8a -o /tmp/jniLibs build --release -p pdfcraft-ffi
           for f in /tmp/jniLibs/arm64-v8a/*.so; do echo "$f"; done

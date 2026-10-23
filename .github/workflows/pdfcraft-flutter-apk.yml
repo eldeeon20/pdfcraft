@@ -1,0 +1,84 @@
+name: pdfcraft-flutter-apk
+
+# Compila el APK Flutter (host + d4rt) usando el .so del core compilado
+# antes por pdfcraft-core-so. Manual.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  apk:
+    name: host apk arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/hostedtoolcache
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # Trae el .so del core: último run exitoso de pdfcraft-core-so.
+      - name: Descargar .so del core
+        id: so
+        run: |
+          run_id=$(gh api "repos/${{ github.repository }}/actions/workflows/pdfcraft-core-so.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].id')
+          echo "usando run del core: $run_id"
+          mkdir -p core_so
+          gh run download "$run_id" --repo "${{ github.repository }}" -n pdfcraft-core-arm64 -D core_so
+          ls -la core_so
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Colocar el .so en jniLibs
+        run: |
+          set -e
+          J=apps/pdfcraft_flutter/android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$J"
+          cp core_so/libpdfcraft_ffi.so "$J/"
+          ls -la "$J"
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-pf-${{ runner.os }}-${{ hashFiles('apps/pdfcraft_flutter/pubspec.yaml') }}
+          restore-keys: pub-pf-${{ runner.os }}-
+
+      - name: Cache gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-pf-${{ runner.os }}-v1
+          restore-keys: |
+            gradle-pf-${{ runner.os }}-
+
+      - name: flutter pub get
+        working-directory: apps/pdfcraft_flutter
+        run: flutter pub get
+
+      - name: flutter build apk
+        working-directory: apps/pdfcraft_flutter
+        run: flutter build apk --release -t lib/main.dart
+
+      - name: Subir APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcraft-flutter-arm64
+          path: apps/pdfcraft_flutter/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error

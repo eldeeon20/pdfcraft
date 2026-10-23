@@ -55,7 +55,7 @@ pub extern "C" fn pdfcraft_image(doc: u64, page: u32, dpi: f64, out_len: *mut u3
         let guard = session_slot().lock().map(|mut s| s.get_doc_png(DocId(doc), page, dpi));
         match guard {
             Ok(Ok(bytes)) => bytes,
-            Ok(Err(e)) => error_bytes(e),
+            Ok(Err(e)) => error_bytes(&e),
             Err(_) => error_bytes("rendering failed unexpectedly"),
         }
     }))
@@ -98,7 +98,7 @@ fn run(req: *const u8, len: u32) -> String {
     let method = parsed.get("m").and_then(|m| m.as_str()).unwrap_or_default().to_owned();
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(&method, &parsed)));
     match outcome {
-        Ok(Ok(v)) => serde_json::json!({ "ok": true }).merge(v).to_string(),
+        Ok(Ok(v)) => answer(Ok(v)),
         Ok(Err(e)) => answer(Err(e)),
         Err(_) => answer(Err(format!("{method} failed unexpectedly"))),
     }
@@ -134,15 +134,18 @@ fn dispatch(m: &str, v: &serde_json::Value) -> Result<serde_json::Value, String>
             let to = v_num(v, "to")? as usize;
             page_arg_edit(v, "pages", |pages| Edit::MovePages { pages, to })
         }
-        "duplicate" => page_arg_edit(v, "pages", |pages| Edit::DuplicatePages { pages }),
+        "duplicate" => page_arg_edit(v, "pages", |pages| {
+            let at = v.get("at").and_then(|a| a.as_u64()).map(|a| a as usize);
+            Edit::DuplicatePages { pages, at }
+        }),
         "blank" => {
             let doc = v_docid(v)?;
             let at = v_num(v, "at")? as usize;
             let (w, h) = (v_f64(v, "w").unwrap_or(612.0), v_f64(v, "h").unwrap_or(792.0));
             do_apply(doc, Edit::InsertBlankPage { at, width: w, height: h })
         }
-        "undo" => simple_session(v, |s, id| s.undo(id).map(|label| serde_json::json!({ "label": label }).merge(doc(s.page_len(id))))),
-        "redo" => simple_session(v, |s, id| s.redo(id).map(|label| serde_json::json!({ "label": label }).merge(doc(s.page_len(id))))),
+        "undo" => simple_session(v, |s, id| s.undo(id).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
+        "redo" => simple_session(v, |s, id| s.redo(id).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
         "save" => save_doc(v),
         "close" => {
             let id = v_docid(v)?;
@@ -182,7 +185,7 @@ trait GetDocPng {
 impl GetDocPng for Session {
     fn get_doc_png(&mut self, id: DocId, page: u32, dpi: f64) -> Result<Vec<u8>, String> {
         use pdfcraft_engine::export::Exporter;
-        let doc = self.get(id).ok_or(format!("no document {id}"))?;
+        let doc = self.get(id).ok_or(format!("no document {}", id.0))?;
         let mut exp = Exporter::new(doc);
         exp.png(page as usize, dpi)
     }
@@ -247,7 +250,7 @@ fn create_text(v: &serde_json::Value) -> Result<serde_json::Value, String> {
     with(|s| {
         let bytes = s.create_from_text(title, text).map_err(|e| e.to_string())?;
         let id = s.open_new(format!("{title}.pdf"), bytes).map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({ "doc": id.0, "pages": s.page_len(id) }).merge(doc(s.page_len(id))))
+        Ok(serde_json::json!({ "doc": id.0, "pages": s.page_len(id) }))
     })
 }
 

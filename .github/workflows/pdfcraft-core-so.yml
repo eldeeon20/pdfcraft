@@ -17,15 +17,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Rust toolchain con target Android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
       - name: Instalar cargo-ndk
         run: cargo install cargo-ndk
+
+      - name: Detectar NDK
+        run: |
+          ndk="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ -z "$ndk" ]; then
+            ndk=$(find /usr/local/lib/android/sdk/ndk -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          fi
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
 
       - name: Compilar libpdfcraft_ffi.so (arm64-v8a)
         env:
           CARGO_BUILD_JOBS: "2"
         run: |
           set -e
-          cargo ndk -t arm64-v8a build --release -p pdfcraft-ffi
+          cargo ndk -t arm64-v8a --platform 26 build --release -p pdfcraft-ffi
           ls -la target/aarch64-linux-android/release/libpdfcraft_ffi.so
 
       - name: Subir artefacto del core

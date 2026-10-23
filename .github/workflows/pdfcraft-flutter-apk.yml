@@ -27,52 +27,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: 3.27.4
+      - name: Instalar Flutter 3.27.4
+        run: |
+          curl -sL https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.27.4-stable.tar.xz | tar -xJf - -C $HOME
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
 
-      # Genera local.properties que settings.gradle exige (assert flutter.sdk != null).
+      - name: flutter precache --android
+        run: flutter precache --android
+
       - name: Crear local.properties
         run: |
           echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" > apps/pdfcraft_flutter/android/local.properties
           cat apps/pdfcraft_flutter/android/local.properties
-
-      # Trae el .so del core: último run exitoso de pdfcraft-core-so.
-      - name: Descargar .so del core
-        id: so
-        run: |
-          run_id=$(gh api "repos/${{ github.repository }}/actions/workflows/pdfcraft-core-so.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].id')
-          echo "usando run del core: $run_id"
-          mkdir -p core_so
-          gh run download "$run_id" --repo "${{ github.repository }}" -n pdfcraft-core-arm64 -D core_so
-          ls -la core_so
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Colocar el .so en jniLibs
-        run: |
-          set -e
-          J=apps/pdfcraft_flutter/android/app/src/main/jniLibs/arm64-v8a
-          mkdir -p "$J"
-          cp core_so/libpdfcraft_ffi.so "$J/"
-          ls -la "$J"
-
-      - name: Cache pub
-        uses: actions/cache@v4
-        with:
-          path: ~/.pub-cache
-          key: pub-pf-${{ runner.os }}-${{ hashFiles('apps/pdfcraft_flutter/pubspec.yaml') }}
-          restore-keys: pub-pf-${{ runner.os }}-
-
-      - name: Cache gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-pf-${{ runner.os }}-v1
-          restore-keys: |
-            gradle-pf-${{ runner.os }}-
 
       - name: flutter pub get
         working-directory: apps/pdfcraft_flutter

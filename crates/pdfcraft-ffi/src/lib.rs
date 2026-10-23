@@ -24,7 +24,7 @@ const FFI_VERSION: u64 = 1;
 // ---------------------------------------------------------------- ABI
 
 /// Sanity pin: the Dart host checks this before anything else.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pdfcraft_ping() -> u64 {
     FFI_VERSION
 }
@@ -33,7 +33,7 @@ pub extern "C" fn pdfcraft_ping() -> u64 {
 /// Returns a freshly allocated UTF-8 JSON result (length written to `out_len`), owned
 /// by the caller: give it back with [`pdfcraft_free`]. Null only if the request was
 /// unreadable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pdfcraft_call(req: *const u8, len: u32, out_len: *mut u32) -> *mut u8 {
     let answer = run(req, len);
     let bytes = answer.into_bytes();
@@ -49,7 +49,7 @@ pub extern "C" fn pdfcraft_call(req: *const u8, len: u32, out_len: *mut u32) -> 
 }
 
 /// The last rendered page, straight from [`pdfcraft_image`]: one slot, one consumer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pdfcraft_image(doc: u64, page: u32, dpi: f64, out_len: *mut u32) -> *mut u8 {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let guard = session_slot().lock().map(|mut s| s.get_doc_png(DocId(doc), page, dpi));
@@ -69,7 +69,7 @@ pub extern "C" fn pdfcraft_image(doc: u64, page: u32, dpi: f64, out_len: *mut u3
 }
 
 /// Frees what [`pdfcraft_call`] or [`pdfcraft_image`] returned.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pdfcraft_free(ptr: *mut u8, len: u32) {
     if ptr.is_null() {
         return;
@@ -144,8 +144,8 @@ fn dispatch(m: &str, v: &serde_json::Value) -> Result<serde_json::Value, String>
             let (w, h) = (v_f64(v, "w").unwrap_or(612.0), v_f64(v, "h").unwrap_or(792.0));
             do_apply(doc, Edit::InsertBlankPage { at, width: w, height: h })
         }
-        "undo" => simple_session(v, |s, id| s.undo(id).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
-        "redo" => simple_session(v, |s, id| s.redo(id).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
+        "undo" => simple_session(v, |s, id| s.undo(id).map_err(|e| e.to_string()).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
+        "redo" => simple_session(v, |s, id| s.redo(id).map_err(|e| e.to_string()).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
         "save" => save_doc(v),
         "close" => {
             let id = v_docid(v)?;

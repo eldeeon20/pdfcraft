@@ -1,0 +1,47 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+android {
+    namespace = "ai.storyteller.pdfcraft"
+    compileSdk = 36
+    ndkVersion = "28.2.13676358"
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17.toString()
+    }
+
+    defaultConfig {
+        applicationId = "ai.storyteller.pdfcraft"
+        minSdk = 26
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+    }
+
+    buildTypes {
+        release {
+            // Firma con la debug key, como los otros APKs de este repo.
+            signingConfig = signingConfigs.debug
+        }
+    }
+
+    // El core (.so de pdfcraft-ffi) lo baja el workflow a esta carpeta.
+    sourceSets {
+        main {
+            jniLibs.srcDirs += ["src/main/jniLibs"]
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}

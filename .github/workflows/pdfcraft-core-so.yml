@@ -1,0 +1,36 @@
+name: pdfcraft-core-so
+
+# Compila el núcleo de PdfCraft (libpdfcraft_ffi.so, arm64) como artefacto.
+# Lo corre el APK después. Manual.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  so:
+    name: core arm64-v8a
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Compilar libpdfcraft_ffi.so (arm64-v8a)
+        env:
+          CARGO_BUILD_JOBS: "2"
+        run: |
+          set -e
+          cargo ndk -t arm64-v8a build --release -p pdfcraft-ffi
+          ls -la target/aarch64-linux-android/release/libpdfcraft_ffi.so
+
+      - name: Subir artefacto del core
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcraft-core-arm64
+          path: target/aarch64-linux-android/release/libpdfcraft_ffi.so
+          if-no-files-found: error

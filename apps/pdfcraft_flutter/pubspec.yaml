@@ -1,0 +1,26 @@
+name: pdfcraft_flutter
+description: "PdfCraft Android — core .so compilado aparte + GUI en scripts d4rt."
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  file_picker: ^10.3.10
+
+  # Motor de scripts (d4rt): corre las GUI/flows del APK.
+  d4rt: ^0.2.4
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Scripts d4rt embebidos (fallback si el repo remoto no está).
+  assets:
+    - assets/scripts/

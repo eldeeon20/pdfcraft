@@ -1,0 +1,15 @@
+[package]
+name = "pdfcraft-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "C ABI over the headless engine for the d4rt scripted app"
+
+[lib]
+name = "pdfcraft_ffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pdfcraft-engine.workspace = true
+serde_json.workspace = true

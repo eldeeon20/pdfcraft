@@ -34,8 +34,8 @@ jobs:
       # Genera local.properties que settings.gradle exige (assert flutter.sdk != null).
       - name: Crear local.properties
         run: |
-          echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" > android/local.properties
-          cat android/local.properties
+          echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" > apps/pdfcraft_flutter/android/local.properties
+          cat apps/pdfcraft_flutter/android/local.properties
 
       # Trae el .so del core: último run exitoso de pdfcraft-core-so.
       - name: Descargar .so del core

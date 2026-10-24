@@ -78,7 +78,7 @@ class PdfDoc {
   double altoPagina(int pagina) => tamano(pagina)[1];
 
   /// Cuántos textos/imágenes editables hay agregados en [pagina].
-  int cantidadContenido(int pagina) => Core.i.contenido(id, pagina).length;
+  int cantidadContenido(int pagina) => Core.i.contenido(id, pagina - 1).length;
 
   /// Agrega texto en [x],[y] (display space, origen abajo-izquierda; [y] es
   /// el borde superior de la primera línea).
@@ -97,7 +97,7 @@ class PdfDoc {
     final t = tamano(pagina);
     final double w = ancho > 0 ? ancho : (t[0] - x - 24).clamp(40.0, t[0]).toDouble();
     final rect = [x, y - tam * 1.2, x + w, y];
-    Core.i.agregarTexto(id, pagina, rect, texto,
+    Core.i.agregarTexto(id, pagina - 1, rect, texto,
         tam: tam, negrita: negrita, italica: italica, alineacion: alineacion, familia: familia);
     Sesion.i.revision++;
   }
@@ -125,7 +125,7 @@ class PdfDoc {
     final double cx = x.clamp(w / 2, t[0] - w / 2).toDouble();
     final double cy = y.clamp(h / 2, t[1] - h / 2).toDouble();
     final rect = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
-    Core.i.agregarImagen(id, pagina, ruta, rect: rect);
+    Core.i.agregarImagen(id, pagina - 1, ruta, rect: rect);
     Sesion.i.revision++;
   }
 
@@ -133,47 +133,47 @@ class PdfDoc {
   Future<void> borrarUltimo(int pagina) async {
     final n = cantidadContenido(pagina);
     if (n == 0) return;
-    Core.i.borrarContenido(id, pagina, n - 1);
+    Core.i.borrarContenido(id, pagina - 1, n - 1);
     Sesion.i.revision++;
   }
 
   /// Borra el elemento [index] agregado en [pagina].
   Future<void> borrarContenido(int pagina, int index) async {
-    Core.i.borrarContenido(id, pagina, index);
+    Core.i.borrarContenido(id, pagina - 1, index);
     Sesion.i.revision++;
   }
 
   /// La página [pagina] (1 = primera) como PNG a los dpi del núcleo del doc.
-  Uint8List png(int pagina, double dpi) => Core.i.paginaPng(id, pagina, dpi);
+  Uint8List png(int pagina, double dpi) => Core.i.paginaPng(id, pagina - 1, dpi);
 
   /// El texto de [pagina], tal cual lo entrega el core.
   Future<String> textoDe(int pagina) async {
     final r = Core.i.request({'m': 'pages', 'doc': id});
     final total = (r['pages'] as num?)?.toInt() ?? 1;
     if (pagina < 1 || pagina > total) return '';
-    final t = Core.i.request({'m': 'text', 'doc': id, 'page': pagina});
+    final t = Core.i.request({'m': 'text', 'doc': id, 'page': pagina - 1});
     return (t['text'] as String?) ?? '';
   }
 
   Future<void> rotar(int pagina, int grados) async {
-    await Core.i.request({'m': 'rotate', 'doc': id, 'pages': pagina, 'deg': grados});
+    await Core.i.request({'m': 'rotate', 'doc': id, 'pages': pagina - 1, 'deg': grados});
     Sesion.i.revision++;
   }
 
   Future<void> atrasRotar(int pagina) => rotar(pagina, -90);
 
   Future<void> del(int pagina) async {
-    await Core.i.request({'m': 'delete', 'doc': id, 'pages': pagina});
+    await Core.i.request({'m': 'delete', 'doc': id, 'pages': pagina - 1});
     _refrescar();
   }
 
   Future<void> mover(int desde, int hasta) async {
-    await Core.i.request({'m': 'move', 'doc': id, 'pages': desde, 'to': hasta});
+    await Core.i.request({'m': 'move', 'doc': id, 'pages': desde - 1, 'to': hasta - 1});
     _refrescar();
   }
 
   Future<void> duplicar(int pagina) async {
-    await Core.i.request({'m': 'duplicate', 'doc': id, 'pages': pagina});
+    await Core.i.request({'m': 'duplicate', 'doc': id, 'pages': pagina - 1});
     _refrescar();
   }
 

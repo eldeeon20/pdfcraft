@@ -64,6 +64,12 @@ class Lienzo {
   Lienzo();
 }
 
+/// Editor de lienzo full-bleed: hoja blanca, escribir tocando, elegir imagen,
+/// arrastrar textos/imágenes y guardar. El host lo construye entero.
+class Editor {
+  Editor();
+}
+
 /// Una pantalla completa del script.
 class Pantalla {
   Pantalla(this.titulo, this.cuerpo, {this.caja = true, this.menu = const []});

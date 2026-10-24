@@ -327,6 +327,16 @@ void registrarBridgesPdf(d4.D4rt interprete) {
   _registra(
     interprete,
     d4.BridgedClass(
+      nativeType: Editor,
+      name: 'Editor',
+      constructors: {
+        '': _ctor((_, __, ___) => Editor()),
+      },
+    ),
+  );
+  _registra(
+    interprete,
+    d4.BridgedClass(
       nativeType: Pantalla,
       name: 'Pantalla',
       constructors: {

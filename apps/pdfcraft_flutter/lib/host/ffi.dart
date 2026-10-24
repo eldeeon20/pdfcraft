@@ -158,6 +158,29 @@ class Core {
     request({'m': 'delcontent', 'doc': doc, 'page': pagina, 'index': index});
   }
 
+  /// Mueve el elemento [index] de [pagina] al nuevo [rect] (display space).
+  void moverContenido(int doc, int pagina, int index, List<double> rect) {
+    request({
+      'm': 'movecontent',
+      'doc': doc,
+      'page': pagina,
+      'index': index,
+      'rect': rect,
+    });
+  }
+
+  /// Deshace el último cambio; devuelve la etiqueta del cambio.
+  String deshacer(int doc) {
+    final r = request({'m': 'undo', 'doc': doc});
+    return (r['label'] as String?) ?? '';
+  }
+
+  /// Rehace el último cambio deshecho.
+  String rehacer(int doc) {
+    final r = request({'m': 'redo', 'doc': doc});
+    return (r['label'] as String?) ?? '';
+  }
+
   /// Renderiza una página a PNG (crudo) o lanza [CoreError].
   Uint8List paginaPng(int doc, int pagina, double dpi) {
     _asegurar();

@@ -10,9 +10,8 @@ Pantalla main() {
   final d = s.doc;
   if (d == null) {
     return Pantalla('Sin documento', [
-      Titulo('Sin documento'),
-      Texto('No hay nada abierto. Volvé al inicio y abrí un PDF.'),
-      Espacio(10),
+      Texto('No hay nada abierto.'),
+      Espacio(12),
       Boton('Ir al inicio', 'al_inicio'),
     ]);
   }
@@ -21,15 +20,14 @@ Pantalla main() {
     Visor(),
     caja: false,
     menu: [
-      Boton('Editar contenido', 'ir_editar', icono: 'edit'),
+      Boton('Editar', 'ir_editar', icono: 'edit'),
       Boton('Guardar PDF', 'guardar', icono: 'save'),
-      Boton('Crear un PDF', 'crear', icono: 'add_page'),
+      Boton('Nuevo PDF', 'nuevo', icono: 'add_page'),
       Boton('Cerrar documento', 'cerrar', icono: 'trash'),
     ],
   );
 }
 
-// Acciones del visor.
 Future<Object?> Accion(String id) async {
   final s = yo();
   switch (id) {
@@ -37,12 +35,15 @@ Future<Object?> Accion(String id) async {
       return Vista('editar');
     case 'guardar':
       final ruta = await guardarComo();
-      if (ruta != null) {
-        aviso('guardado en $ruta');
-      }
+      if (ruta != null) aviso('guardado');
       return null;
-    case 'crear':
-      return Vista('crear');
+    case 'nuevo':
+      final d = await crear('Documento', '');
+      s.fijarDoc(d);
+      s.archivoFue('Documento.pdf');
+      s.fijarPagina(1);
+      s.fijarCampo('modo', '');
+      return Vista('editar');
     case 'cerrar':
       s.doc?.cerrar();
       s.fijarDoc(null);

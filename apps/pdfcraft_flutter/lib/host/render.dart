@@ -11,6 +11,7 @@ import 'package:d4rt/d4rt.dart' as d4;
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import 'editor.dart';
 import 'kit.dart';
 import 'sesion.dart';
 
@@ -39,6 +40,12 @@ IconData iconoDe(String nombre) {
       return Icons.person_add_rounded;
     case 'image':
       return Icons.image_outlined;
+    case 'preview':
+      return Icons.visibility_outlined;
+    case 'open':
+      return Icons.folder_open_rounded;
+    case 'undo':
+      return Icons.undo_rounded;
     default:
       return Icons.build_outlined;
   }
@@ -64,6 +71,8 @@ Widget? _nodo(Object? n, Sesion s) {
       return _nodo(p.cuerpo, s); // la pantalla la maneja el host
     case Visor _:
       return const VisorPdf();
+    case Editor _:
+      return const EditorPdf();
     case Lienzo _:
       return const LienzoPdf();
     case Titulo v:
@@ -77,14 +86,24 @@ Widget? _nodo(Object? n, Sesion s) {
         child: Text(v.texto, style: const TextStyle(fontSize: 16, height: 1.45)),
       );
     case Boton v:
-      final b = FilledButton(
-        style: FilledButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
-        onPressed: () => AccionFlujo.i.presionar(v.id),
-        child: Text(v.etiqueta),
-      );
+      const relleno = EdgeInsets.symmetric(horizontal: 22, vertical: 14);
+      const texto = TextStyle(fontSize: 16, fontWeight: FontWeight.w600);
+      final Widget b = v.primario
+          ? FilledButton(
+              style: FilledButton.styleFrom(padding: relleno, textStyle: texto),
+              onPressed: () => AccionFlujo.i.presionar(v.id),
+              child: Text(v.etiqueta),
+            )
+          : OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                padding: relleno,
+                textStyle: texto,
+                foregroundColor: const Color(0xFFD5DAE6),
+                side: const BorderSide(color: Color(0xFF3A4055)),
+              ),
+              onPressed: () => AccionFlujo.i.presionar(v.id),
+              child: Text(v.etiqueta),
+            );
       return SizedBox(child: b, width: v.primario ? double.infinity : null);
     case Entrada v:
       return _CampoTexto(id: v.id, hint: v.hint, multilinea: v.multilinea, inicial: s.campo(v.id));

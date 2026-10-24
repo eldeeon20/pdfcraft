@@ -149,6 +149,7 @@ fn dispatch(m: &str, v: &serde_json::Value) -> Result<serde_json::Value, String>
         "addimage" => add_image(v),
         "added" => added_list(v),
         "delcontent" => delete_content(v),
+        "movecontent" => move_content(v),
         "undo" => simple_session(v, |s, id| s.undo(id).map_err(|e| e.to_string()).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
         "redo" => simple_session(v, |s, id| s.redo(id).map_err(|e| e.to_string()).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
         "save" => save_doc(v),
@@ -402,4 +403,35 @@ fn delete_content(v: &serde_json::Value) -> Result<serde_json::Value, String> {
     let page = v_num(v, "page")? as usize;
     let index = v_num(v, "index")? as usize;
     do_apply(id, Edit::DeleteContent { page, index })
+}
+
+/// Mueve (o cambia el rect de) un elemento ya agregado, conservando su
+/// contenido. El rect viene en display space, origen abajo-izquierda.
+fn move_content(v: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let id = v_docid(v)?;
+    let page = v_num(v, "page")? as usize;
+    let index = v_num(v, "index")? as usize;
+    let rect = parse_rect(v.get("rect"))?;
+    let content = with(|s| {
+        let d = s.get(id).ok_or(format!("no document {}", id.0))?;
+        let a = d
+            .added()
+            .iter()
+            .filter(|a| a.page == page)
+            .nth(index)
+            .ok_or(format!("no content {index} on page {page}"))?;
+        Ok(match &a.content {
+            AddedContent::Text(t) => {
+                let mut t = t.clone();
+                t.rect = rect;
+                AddedContent::Text(t)
+            }
+            AddedContent::Image(i) => {
+                let mut i = i.clone();
+                i.rect = rect;
+                AddedContent::Image(i)
+            }
+        })
+    })?;
+    do_apply(id, Edit::UpdateContent { page, index, content })
 }

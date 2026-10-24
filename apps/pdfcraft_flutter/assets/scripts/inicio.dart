@@ -1,4 +1,4 @@
-// Flujo "inicio": pantalla de bienvenida de PdfCraft.
+// Flujo "inicio": abrir un PDF o empezar con una hoja en blanco.
 //
 // main() -> Pantalla
 
@@ -6,43 +6,52 @@ import 'package:pdfcraft_flutter/api.dart';
 
 Pantalla main() {
   final d = yo().doc;
-  final sub = d == null
-      ? 'Nada abierto todavía. ¿Qué querés hacer?'
-      : 'Abierto: ${d.titulo} (${d.paginas} páginas).';
+  final cuerpo = [];
 
-  return Pantalla('PdfCraft', [
-    Titulo('PdfCraft'),
-    Texto(sub),
-    Espacio(14),
-    Columna([
-      Boton('Abrir un PDF', 'abrir'),
-      Espacio(10),
-      Boton('Crear uno nuevo', 'crear'),
-      Espacio(10),
-      Boton('Seguir en el visor', 'ver', primario: false),
-    ]),
-    Espacio(18),
-    Texto('core v${versionCore()} — gui por script d4rt'),
-  ]);
+  if (d == null) {
+    cuerpo.add(Texto('Abrí un PDF o creá una hoja en blanco para escribir.'));
+    cuerpo.add(Espacio(20));
+    cuerpo.add(Boton('Abrir PDF', 'abrir', icono: 'open'));
+    cuerpo.add(Espacio(10));
+    cuerpo.add(Boton('Nuevo PDF en blanco', 'nuevo', primario: false, icono: 'add_page'));
+  } else {
+    cuerpo.add(Texto('${d.titulo} · ${d.paginas} páginas'));
+    cuerpo.add(Espacio(18));
+    cuerpo.add(Boton('Abrir el editor', 'editar', icono: 'edit'));
+    cuerpo.add(Espacio(10));
+    cuerpo.add(Boton('Ver', 'ver', primario: false, icono: 'preview'));
+    cuerpo.add(Espacio(10));
+    cuerpo.add(Boton('Nuevo PDF en blanco', 'nuevo', primario: false, icono: 'add_page'));
+  }
+
+  return Pantalla('PdfCraft', cuerpo);
 }
 
-// Acciones de la home.
 Future<Object?> Accion(String id) async {
+  final s = yo();
   if (id == 'abrir') {
     final d = await abrir();
-    if (d != null) {
-      return Vista('ver');
-    }
-    return null; // cancelado
+    if (d != null) return Vista('editar');
+    return null;
   }
-  if (id == 'crear') {
-    return Vista('crear');
+  if (id == 'nuevo') {
+    final d = await crear('Documento', '');
+    s.fijarDoc(d);
+    s.archivoFue('Documento.pdf');
+    s.fijarPagina(1);
+    s.fijarCampo('modo', '');
+    aviso('hoja en blanco creada');
+    return Vista('editar');
   }
-  if (id == 'ver') {
-    if (yo().doc == null) {
-      aviso('primero abrí un PDF');
+  if (id == 'editar') {
+    if (s.doc == null) {
+      aviso('primero abrí o creá un PDF');
       return null;
     }
+    return Vista('editar');
+  }
+  if (id == 'ver') {
+    if (s.doc == null) return null;
     return Vista('ver');
   }
   return null;

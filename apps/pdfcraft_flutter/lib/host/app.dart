@@ -19,10 +19,12 @@ class PdfApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const fondo = Color(0xFF14161F);
     const superficie = Color(0xFF1D2030);
-    const acento = Color(0xFF7AA2F7);
+    const acento = Color(0xFFE3B872);
     final esquema = ColorScheme.dark(
       primary: acento,
+      onPrimary: const Color(0xFF1A1408),
       secondary: acento,
+      onSecondary: const Color(0xFF1A1408),
       surface: superficie,
       error: const Color(0xFFF7768E),
     );
@@ -266,19 +268,21 @@ class _PdfHomeState extends State<PdfHome> {
             icon: Icon(iconoDe(b.icono)),
             onPressed: ocupado ? null : () => _presiono(b.id),
           ),
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert_rounded),
-          onSelected: (id) => _presiono(id),
-          itemBuilder: (_) => [
-            for (final b in botones)
-              PopupMenuItem(value: b.id, child: Text(b.etiqueta)),
-          ],
-        ),
-        IconButton(
-          tooltip: 'Inicio',
-          icon: const Icon(Icons.home_outlined),
-          onPressed: ocupado ? null : () => _irA('inicio'),
-        ),
+        if (botones.isNotEmpty)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: (id) => _presiono(id),
+            itemBuilder: (_) => [
+              for (final b in botones)
+                PopupMenuItem(value: b.id, child: Text(b.etiqueta)),
+            ],
+          ),
+        if (flujo != 'inicio')
+          IconButton(
+            tooltip: 'Inicio',
+            icon: const Icon(Icons.home_outlined),
+            onPressed: ocupado ? null : () => _irA('inicio'),
+          ),
       ],
     );
   }

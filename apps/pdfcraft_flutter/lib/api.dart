@@ -19,7 +19,7 @@ import 'dart:typed_data';
 import 'host/ffi.dart';
 import 'host/sesion.dart';
 
-export 'host/kit.dart' show Pantalla, Visor, Lienzo, Vista, Texto, Titulo, Boton, Entrada, Fila, Columna, Panel, Espacio;
+export 'host/kit.dart' show Pantalla, Visor, Lienzo, Editor, Vista, Texto, Titulo, Boton, Entrada, Fila, Columna, Panel, Espacio;
 export 'host/sesion.dart' show Sesion, yo;
 
 /// Un documento abierto en el core (una vez, hasta cerrarlo).
@@ -79,6 +79,27 @@ class PdfDoc {
 
   /// Cuántos textos/imágenes editables hay agregados en [pagina].
   int cantidadContenido(int pagina) => Core.i.contenido(id, pagina - 1).length;
+
+  /// Elementos editables agregados en [pagina] (index, kind, rect, …).
+  List<Map<String, dynamic>> contenido(int pagina) => Core.i.contenido(id, pagina - 1);
+
+  /// Mueve el elemento [index] de [pagina] al [rect] indicado.
+  Future<void> moverContenido(int pagina, int index, List<double> rect) async {
+    Core.i.moverContenido(id, pagina - 1, index, rect);
+    Sesion.i.revision++;
+  }
+
+  /// Deshace el último cambio (texto, imagen, mover, página…).
+  Future<void> deshacer() async {
+    Core.i.deshacer(id);
+    _refrescar();
+  }
+
+  /// Rehace el último cambio deshecho.
+  Future<void> rehacer() async {
+    Core.i.rehacer(id);
+    _refrescar();
+  }
 
   /// Agrega texto en [x],[y] (display space, origen abajo-izquierda; [y] es
   /// el borde superior de la primera línea).

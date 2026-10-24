@@ -7,6 +7,7 @@ library;
 
 import 'dart:typed_data';
 
+import 'package:d4rt/d4rt.dart' as d4;
 import 'package:flutter/material.dart';
 
 import '../api.dart';
@@ -54,6 +55,7 @@ List<Widget> renderLista(Object? fuente) {
 
 Widget? _nodo(Object? n, Sesion s) {
   if (n == null) return null;
+  if (n is d4.BridgedInstance) return _nodo(n.nativeObject, s);
   // Secciones de líneas de texto crudo (listas de párrafo, etc.).
   switch (n) {
     case Pantalla p:

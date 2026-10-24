@@ -46,8 +46,8 @@ bool _bool(dynamic v, [bool d = false]) {
 
 /// Desenvuelve instancias bridged (llegan envueltas en BridgedInstance).
 Object? des(Object? v) {
-  if (v is d4.BridgedInstance) return v.nativeObject;
-  if (v is List<Object?>) return [for (final x in v) des(x)];
+  if (v is d4.BridgedInstance) return des(v.nativeObject);
+  if (v is List) return [for (final x in v) des(x)];
   return v;
 }
 
@@ -156,6 +156,18 @@ void registrarBridgesPdf(d4.D4rt interprete) {
         'fijarCampo': (_, t, p, __) {
           (t as Sesion).fijarCampo(_str(p.isEmpty ? '' : p[0]),
               _str(p.length > 1 ? p[1] : ''));
+          return null;
+        },
+        'fijarDoc': (_, t, p, __) {
+          (t as Sesion).fijarDoc(des(p.isEmpty ? null : p[0]) as PdfDoc?);
+          return null;
+        },
+        'fijarPagina': (_, t, p, __) {
+          (t as Sesion).fijarPagina(_int(p.isEmpty ? 1 : p[0]));
+          return null;
+        },
+        'fijarDpi': (_, t, p, __) {
+          (t as Sesion).fijarDpi(_flt(p.isEmpty ? 144 : p[0]));
           return null;
         },
         'archivoFue': (_, t, p, __) {
@@ -275,7 +287,7 @@ void registrarBridgesPdf(d4.D4rt interprete) {
       constructors: {
         '': _ctor((_, p, n) => Pantalla(
             _str(p.isEmpty ? 'PdfCraft' : p[0]),
-            p.length > 1 ? p[1] : null,
+            p.length > 1 ? des(p[1]) : null,
             caja: _bool(n['caja'] ?? true, true),
             menu: des(n['menu']) as List<Object?>? ?? const [])),
       },

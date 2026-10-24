@@ -1,7 +1,10 @@
 /// App PdfCraft Android: host mínimo que rinde el árbol del script.
 
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../api.dart';
 import 'host_puente.dart';
@@ -56,6 +59,7 @@ class _PdfHomeState extends State<PdfHome> {
     AccionFlujo.i.conectar(_presiono);
     HostPuente.abrirHook = _abrirArchivo;
     HostPuente.guardarHook = _guardarComo;
+    HostPuente.imagenHook = _elegirImagen;
     _arranco();
   }
 
@@ -157,20 +161,80 @@ class _PdfHomeState extends State<PdfHome> {
       Sesion.i.aviso('no hay documento para guardar');
       return null;
     }
-    final ruta = await FilePicker.platform.saveFile(
-      fileName: 'pdfcraft.pdf',
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-    );
-    if (ruta == null) return null;
+    final nombre = Sesion.i.nombreArchivo.isEmpty ? 'pdfcraft.pdf' : Sesion.i.nombreArchivo;
+    final seguro = nombre.toLowerCase().endsWith('.pdf') ? nombre : '$nombre.pdf';
+    String temporal;
     try {
-      await d.guardar(ruta);
-      Sesion.i.aviso('guardado en $ruta');
-      return ruta;
+      final dir = await getTemporaryDirectory();
+      temporal = '${dir.path}/$seguro';
+      await d.guardar(temporal);
     } catch (e) {
-      Sesion.i.aviso('no se pudo guardar ahí: $e');
+      Sesion.i.aviso('no se pudo preparar el PDF: $e');
       return null;
     }
+    final bytes = await File(temporal).readAsBytes();
+    try {
+      final ruta = await FilePicker.platform.saveFile(
+        dialogTitle: 'Guardar PDF',
+        fileName: seguro,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+        bytes: bytes,
+      );
+      if (ruta != null) {
+        Sesion.i.aviso('guardado en $ruta');
+        await _mostrarRuta(ruta);
+        return ruta;
+      }
+    } catch (e) {
+      Sesion.i.aviso('el selector falló: $e');
+    }
+    try {
+      Directory? dir;
+      try {
+        dir = await getExternalStorageDirectory();
+      } catch (_) {}
+      dir ??= await getApplicationDocumentsDirectory();
+      final carpeta = Directory('${dir.path}/PdfCraft');
+      await carpeta.create(recursive: true);
+      final ruta = '${carpeta.path}/$seguro';
+      await File(ruta).writeAsBytes(bytes, flush: true);
+      Sesion.i.aviso('guardado en $ruta');
+      await _mostrarRuta(ruta);
+      return ruta;
+    } catch (e) {
+      Sesion.i.aviso('no se pudo guardar: $e');
+      return null;
+    }
+  }
+
+  Future<String?> _elegirImagen() async {
+    final f = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['png', 'jpg', 'jpeg'],
+    );
+    final ruta = f?.files.single.path;
+    if (ruta == null) return null;
+    Sesion.i.fijarCampo('imagen', ruta);
+    Sesion.i.aviso('imagen elegida: ${ruta.split('/').last}');
+    return ruta;
+  }
+
+  Future<void> _mostrarRuta(String ruta) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('PDF guardado'),
+        content: SelectableText('Ruta:\n$ruta'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Listo'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ---------------------------------------------------------------- build

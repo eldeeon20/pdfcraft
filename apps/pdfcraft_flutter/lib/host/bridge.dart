@@ -90,6 +90,11 @@ void registrarBridgesPdf(d4.D4rt interprete) {
     (_, __, ___, ____) => HostPuente.guardarComo(),
     signature: "Future<String?> guardarComo()  // usa yo().doc",
   );
+  interprete.registertopLevelFunction(
+    'elegirImagen',
+    (_, __, ___, ____) => HostPuente.elegirImagen(),
+    signature: 'Future<String?> elegirImagen()',
+  );
 
   // ---------------------------------------------------------------- PdfDoc
   _registra(
@@ -121,6 +126,36 @@ void registrarBridgesPdf(d4.D4rt interprete) {
             _flt(p.length > 2 ? p[2] : 792)),
         'guardar': (_, t, p, __) =>
             (t as PdfDoc).guardar(_str(p.isEmpty ? '' : p[0])),
+        'tamano': (_, t, p, __) =>
+            (t as PdfDoc).tamano(_int(p.isEmpty ? 1 : p[0])),
+        'anchoPagina': (_, t, p, __) =>
+            (t as PdfDoc).anchoPagina(_int(p.isEmpty ? 1 : p[0])),
+        'altoPagina': (_, t, p, __) =>
+            (t as PdfDoc).altoPagina(_int(p.isEmpty ? 1 : p[0])),
+        'cantidadContenido': (_, t, p, __) =>
+            (t as PdfDoc).cantidadContenido(_int(p.isEmpty ? 1 : p[0])),
+        'agregarTexto': (_, t, p, n) => (t as PdfDoc).agregarTexto(
+            _int(p.isEmpty ? 1 : p[0]),
+            _flt(p.length > 1 ? p[1] : 0),
+            _flt(p.length > 2 ? p[2] : 0),
+            _str(p.length > 3 ? p[3] : ''),
+            ancho: _flt(n['ancho'] ?? 0),
+            tam: _flt(n['tam'] ?? 14),
+            negrita: _bool(n['negrita'], false),
+            italica: _bool(n['italica'], false),
+            alineacion: _str(n['alineacion'], 'left'),
+            familia: _str(n['familia'], 'helvetica')),
+        'agregarImagen': (_, t, p, n) => (t as PdfDoc).agregarImagen(
+            _int(p.isEmpty ? 1 : p[0]),
+            _str(p.length > 1 ? p[1] : ''),
+            _flt(p.length > 2 ? p[2] : 0),
+            _flt(p.length > 3 ? p[3] : 0),
+            ancho: _flt(n['ancho'] ?? 180),
+            alto: _flt(n['alto'] ?? 180)),
+        'borrarUltimo': (_, t, p, __) =>
+            (t as PdfDoc).borrarUltimo(_int(p.isEmpty ? 1 : p[0])),
+        'borrarContenido': (_, t, p, __) => (t as PdfDoc).borrarContenido(
+            _int(p.isEmpty ? 1 : p[0]), _int(p.length > 1 ? p[1] : 0)),
         'cerrar': (_, t, __, ___) {
           (t as PdfDoc).cerrar();
           return null;
@@ -276,6 +311,16 @@ void registrarBridgesPdf(d4.D4rt interprete) {
       name: 'Visor',
       constructors: {
         '': _ctor((_, __, ___) => Visor()),
+      },
+    ),
+  );
+  _registra(
+    interprete,
+    d4.BridgedClass(
+      nativeType: Lienzo,
+      name: 'Lienzo',
+      constructors: {
+        '': _ctor((_, __, ___) => Lienzo()),
       },
     ),
   );

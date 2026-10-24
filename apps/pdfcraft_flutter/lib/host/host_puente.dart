@@ -11,6 +11,7 @@ import '../host/sesion.dart';
 class HostPuente {
   static Future<PdfDoc?> Function()? abrirHook;
   static Future<String?> Function()? guardarHook;
+  static Future<String?> Function()? imagenHook;
 
   static Future<PdfDoc?> abrir() async {
     final h = abrirHook;
@@ -25,6 +26,15 @@ class HostPuente {
     final h = guardarHook;
     if (h == null) {
       Sesion.i.aviso('el host no dejó guardar todavía');
+      return null;
+    }
+    return h();
+  }
+
+  static Future<String?> elegirImagen() async {
+    final h = imagenHook;
+    if (h == null) {
+      Sesion.i.aviso('el host no dejó elegir imágenes todavía');
       return null;
     }
     return h();

@@ -37,6 +37,8 @@ IconData iconoDe(String nombre) {
       return Icons.ios_share_rounded;
     case 'creado':
       return Icons.person_add_rounded;
+    case 'image':
+      return Icons.image_outlined;
     default:
       return Icons.build_outlined;
   }
@@ -62,6 +64,8 @@ Widget? _nodo(Object? n, Sesion s) {
       return _nodo(p.cuerpo, s); // la pantalla la maneja el host
     case Visor _:
       return const VisorPdf();
+    case Lienzo _:
+      return const LienzoPdf();
     case Titulo v:
       return Padding(
         padding: const EdgeInsets.only(top: 8, bottom: 12),
@@ -172,7 +176,7 @@ class _VisorPdfState extends State<VisorPdf> {
   Uint8List? _renderActual(Sesion s) {
     final d = s.docActual;
     if (d == null) return null;
-    final firma = '${d.id}:${s.paginaActual}:${s.dpiActual}';
+    final firma = '${d.id}:${s.paginaActual}:${s.dpiActual}:${s.revision}';
     if (firma == _firma && _pngActual != null) return _pngActual;
     try {
       final png = d.png(s.paginaActual, s.dpiActual);
@@ -249,6 +253,116 @@ class _VisorPdfState extends State<VisorPdf> {
     s.fijarPagina(n);
     _firma = '';
     setState(() {});
+  }
+}
+
+/// Una sola hoja tappable: preview fiel de la página actual y reporte del
+/// toque normalizado para que el script coloque texto/imágenes.
+class LienzoPdf extends StatefulWidget {
+  const LienzoPdf({super.key});
+
+  @override
+  State<LienzoPdf> createState() => _LienzoPdfState();
+}
+
+class _LienzoPdfState extends State<LienzoPdf> {
+  Uint8List? _png;
+  String _firma = '';
+  String _error = '';
+
+  Uint8List? _render(Sesion s) {
+    final d = s.docActual;
+    if (d == null) return null;
+    final firma = '${d.id}:${s.paginaActual}:${s.dpiActual}:${s.revision}';
+    if (firma == _firma && _png != null) return _png;
+    try {
+      _png = d.png(s.paginaActual, s.dpiActual);
+      _firma = firma;
+      _error = '';
+      return _png;
+    } catch (e) {
+      _error = '$e';
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Sesion.i;
+    final d = s.docActual;
+    if (d == null) {
+      return const Padding(
+        padding: EdgeInsets.all(24),
+        child: Text('No hay documento abierto', textAlign: TextAlign.center),
+      );
+    }
+    final png = _render(s);
+    final tam = d.tamano(s.paginaActual);
+    final aspecto = (tam.length == 2 && tam[1] > 0) ? tam[0] / tam[1] : 0.7727;
+    final modo = s.campo('modo');
+    return Column(
+      children: [
+        AspectRatio(
+          aspectRatio: aspecto,
+          child: LayoutBuilder(
+            builder: (contexto, c) {
+              return GestureDetector(
+                onTapUp: (det) {
+                  final ancho = c.maxWidth <= 0 ? 1.0 : c.maxWidth;
+                  final alto = c.maxHeight <= 0 ? 1.0 : c.maxHeight;
+                  final nx = (det.localPosition.dx / ancho).clamp(0.0, 1.0);
+                  final ny = (det.localPosition.dy / alto).clamp(0.0, 1.0);
+                  AccionFlujo.i.presionar(
+                      'lienzo:$modo:${nx.toStringAsFixed(5)}:${ny.toStringAsFixed(5)}');
+                },
+                child: png == null
+                    ? Container(
+                        color: Colors.white,
+                        alignment: Alignment.center,
+                        child: Text(
+                          _error.isEmpty ? 'Renderizando…' : _error,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.black54),
+                        ),
+                      )
+                    : Image.memory(png, fit: BoxFit.fill, gaplessPlayback: true),
+              );
+            },
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: s.paginaActual > 1
+                    ? () {
+                        s.fijarPagina(s.paginaActual - 1);
+                        setState(() {});
+                      }
+                    : null,
+              ),
+              Expanded(
+                child: Text(
+                  'Página ${s.paginaActual} de ${d.paginas}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.arrow_forward_rounded),
+                onPressed: s.paginaActual < d.paginas
+                    ? () {
+                        s.fijarPagina(s.paginaActual + 1);
+                        setState(() {});
+                      }
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 

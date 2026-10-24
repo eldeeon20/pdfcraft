@@ -21,8 +21,8 @@ Pantalla main() {
     Visor(),
     caja: false,
     menu: [
-      Boton('Editar páginas', 'ir_editar', icono: 'edit'),
-      Boton('Guardar como…', 'guardar', icono: 'save'),
+      Boton('Editar contenido', 'ir_editar', icono: 'edit'),
+      Boton('Guardar PDF', 'guardar', icono: 'save'),
       Boton('Crear un PDF', 'crear', icono: 'add_page'),
       Boton('Cerrar documento', 'cerrar', icono: 'trash'),
     ],

@@ -58,6 +58,12 @@ class Visor {
   Visor();
 }
 
+/// Una hoja tappable: muestra la página actual y reporta el toque como
+/// `lienzo:<modo>:<x>:<y>` (x,y normalizados 0..1, origen arriba-izquierda).
+class Lienzo {
+  Lienzo();
+}
+
 /// Una pantalla completa del script.
 class Pantalla {
   Pantalla(this.titulo, this.cuerpo, {this.caja = true, this.menu = const []});

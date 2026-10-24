@@ -16,6 +16,8 @@ class Sesion {
   double dpiActual = 144;
   String mensajeActual = '';
   String nombreArchivo = '';
+  /// Sube con cada cambio de contenido/página para invalidar el render.
+  int revision = 0;
   final Map<String, String> campos = {};
 
   bool get hay_doc => docActual != null;

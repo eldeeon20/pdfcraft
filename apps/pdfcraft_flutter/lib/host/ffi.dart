@@ -95,6 +95,69 @@ class Core {
     }
   }
 
+  /// Tamaños de página en puntos de display: `[[w,h], ...]`.
+  List<List<double>> tamanos(int doc) {
+    final r = request({'m': 'sizes', 'doc': doc});
+    final crudo = r['sizes'] as List? ?? const [];
+    return [
+      for (final e in crudo)
+        [for (final v in (e as List)) (v as num).toDouble()],
+    ];
+  }
+
+  /// Agrega texto editable en [rect] (display space, origen abajo-izquierda).
+  void agregarTexto(
+    int doc,
+    int pagina,
+    List<double> rect,
+    String texto, {
+    double tam = 14,
+    bool negrita = false,
+    bool italica = false,
+    String alineacion = 'left',
+    String familia = 'helvetica',
+    List<double>? color,
+  }) {
+    request({
+      'm': 'addtext',
+      'doc': doc,
+      'page': pagina,
+      'rect': rect,
+      'text': texto,
+      'size': tam,
+      'bold': negrita,
+      'italic': italica,
+      'align': alineacion,
+      'family': familia,
+      if (color != null) 'color': color,
+    });
+  }
+
+  /// Agrega una imagen desde [ruta] (rect opcional en display space).
+  void agregarImagen(int doc, int pagina, String ruta, {List<double>? rect}) {
+    request({
+      'm': 'addimage',
+      'doc': doc,
+      'page': pagina,
+      'path': ruta,
+      if (rect != null) 'rect': rect,
+    });
+  }
+
+  /// Elementos editables agregados en [pagina].
+  List<Map<String, dynamic>> contenido(int doc, int pagina) {
+    final r = request({'m': 'added', 'doc': doc, 'page': pagina});
+    final crudo = r['items'] as List? ?? const [];
+    return [
+      for (final e in crudo) Map<String, dynamic>.from(e as Map),
+    ];
+  }
+
+  /// Borra el elemento [index] de [pagina].
+  void borrarContenido(int doc, int pagina, int index) {
+    request({'m': 'delcontent', 'doc': doc, 'page': pagina, 'index': index});
+  }
+
   /// Renderiza una página a PNG (crudo) o lanza [CoreError].
   Uint8List paginaPng(int doc, int pagina, double dpi) {
     _asegurar();

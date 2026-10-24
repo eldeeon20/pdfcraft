@@ -10,7 +10,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use pdfcraft_engine::{DocId, Edit, Session};
+use pdfcraft_engine::{AddedContent, AddedText, DocId, Edit, FontFamily, Session, TextAlign};
 
 type SessionSlot = OnceLock<Mutex<Session>>;
 
@@ -144,6 +144,11 @@ fn dispatch(m: &str, v: &serde_json::Value) -> Result<serde_json::Value, String>
             let (w, h) = (v_f64(v, "w").unwrap_or(612.0), v_f64(v, "h").unwrap_or(792.0));
             do_apply(doc, Edit::InsertBlankPage { at, width: w, height: h })
         }
+        "sizes" => page_sizes(v),
+        "addtext" => add_text(v),
+        "addimage" => add_image(v),
+        "added" => added_list(v),
+        "delcontent" => delete_content(v),
         "undo" => simple_session(v, |s, id| s.undo(id).map_err(|e| e.to_string()).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
         "redo" => simple_session(v, |s, id| s.redo(id).map_err(|e| e.to_string()).map(|label| serde_json::json!({ "label": label.to_string(), "pages": s.page_len(id) }))),
         "save" => save_doc(v),
@@ -293,4 +298,108 @@ fn save_doc(v: &serde_json::Value) -> Result<serde_json::Value, String> {
         std::fs::write(path, &*bytes).map_err(|e| format!("writing '{path}' failed ({e})"))?;
         Ok(serde_json::json!({ "bytes": bytes.len() }))
     })
+}
+
+fn page_sizes(v: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let id = v_docid(v)?;
+    with(|s| {
+        let d = s.get(id).ok_or(format!("no document {}", id.0))?;
+        let sizes: Vec<[f32; 2]> = d.info.pages.iter().map(|p| [p.width, p.height]).collect();
+        Ok(serde_json::json!({ "sizes": sizes }))
+    })
+}
+
+fn parse_rect(v: Option<&serde_json::Value>) -> Result<[f64; 4], String> {
+    let arr = v.and_then(|x| x.as_array()).ok_or("missing 'rect'")?;
+    if arr.len() != 4 {
+        return Err("'rect' must be [x0, y0, x1, y1]".to_string());
+    }
+    let mut out = [0.0f64; 4];
+    for (i, x) in arr.iter().enumerate() {
+        out[i] = x.as_f64().ok_or("'rect' values must be numbers")?;
+    }
+    Ok(out)
+}
+
+fn add_text(v: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let id = v_docid(v)?;
+    let page = v_num(v, "page")? as usize;
+    let rect = parse_rect(v.get("rect"))?;
+    let text = v.get("text").and_then(|t| t.as_str()).ok_or("missing 'text'")?.to_string();
+    let mut added = AddedText { rect, text, ..AddedText::default() };
+    if let Some(size) = v.get("size").and_then(|x| x.as_f64()) {
+        added.size = size;
+    }
+    if let Some(color) = v.get("color").and_then(|c| c.as_array()) {
+        if color.len() == 3 {
+            for (i, c) in color.iter().enumerate() {
+                if let Some(x) = c.as_f64() {
+                    added.color[i] = x;
+                }
+            }
+        }
+    }
+    added.bold = v.get("bold").and_then(|b| b.as_bool()).unwrap_or(false);
+    added.italic = v.get("italic").and_then(|b| b.as_bool()).unwrap_or(false);
+    added.align = match v.get("align").and_then(|a| a.as_str()) {
+        Some("center") => TextAlign::Center,
+        Some("right") => TextAlign::Right,
+        Some("justify") => TextAlign::Justify,
+        _ => TextAlign::Left,
+    };
+    added.family = match v.get("family").and_then(|f| f.as_str()) {
+        Some("times") => FontFamily::Times,
+        Some("courier") => FontFamily::Courier,
+        _ => FontFamily::Helvetica,
+    };
+    do_apply(id, Edit::AddText { page, text: added })
+}
+
+fn add_image(v: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let id = v_docid(v)?;
+    let page = v_num(v, "page")? as usize;
+    let path = v.get("path").and_then(|p| p.as_str()).ok_or("missing 'path'")?;
+    let bytes = std::fs::read(path).map_err(|e| format!("reading '{path}' failed ({e})"))?;
+    let name = path.split(['/', '\\']).next_back().unwrap_or("image").to_string();
+    let rect = match v.get("rect") {
+        Some(r) if !r.is_null() => Some(parse_rect(Some(r))?),
+        _ => None,
+    };
+    do_apply(id, Edit::AddImage { page, rect, name, bytes: std::sync::Arc::new(bytes) })
+}
+
+fn added_list(v: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let id = v_docid(v)?;
+    let page = v_num(v, "page")? as usize;
+    with(|s| {
+        let d = s.get(id).ok_or(format!("no document {}", id.0))?;
+        let items: Vec<serde_json::Value> = d
+            .added()
+            .iter()
+            .filter(|a| a.page == page)
+            .enumerate()
+            .map(|(index, a)| match &a.content {
+                AddedContent::Text(t) => serde_json::json!({
+                    "index": index,
+                    "kind": "text",
+                    "rect": t.rect,
+                    "text": t.text.clone(),
+                    "size": t.size,
+                }),
+                AddedContent::Image(i) => serde_json::json!({
+                    "index": index,
+                    "kind": "image",
+                    "rect": i.rect,
+                }),
+            })
+            .collect();
+        Ok(serde_json::json!({ "items": items }))
+    })
+}
+
+fn delete_content(v: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let id = v_docid(v)?;
+    let page = v_num(v, "page")? as usize;
+    let index = v_num(v, "index")? as usize;
+    do_apply(id, Edit::DeleteContent { page, index })
 }

@@ -13,6 +13,8 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart';
+
 /// Excepción con el mensaje del core.
 class CoreError implements Exception {
   CoreError(this.mensaje);

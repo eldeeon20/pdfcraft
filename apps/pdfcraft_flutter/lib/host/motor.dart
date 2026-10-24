@@ -77,7 +77,7 @@ class Motor {
     if (resp.statusCode != 200) {
       throw ErrorMotor('no hay $url');
     }
-    final texto = utf8.decodeStream(resp);
+    final texto = await utf8.decodeStream(resp);
     if (texto.isEmpty) {
       throw ErrorMotor('vacio $url');
     }

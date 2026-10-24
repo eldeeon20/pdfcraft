@@ -81,12 +81,12 @@ class PdfDoc {
 
   Future<void> mover(int desde, int hasta) async {
     await Core.i.request({'m': 'move', 'doc': id, 'pages': desde, 'to': hasta});
-    await _refrescar();
+    _refrescar();
   }
 
   Future<void> duplicar(int pagina) async {
     await Core.i.request({'m': 'duplicate', 'doc': id, 'pages': pagina});
-    await _refrescar();
+    _refrescar();
   }
 
   Future<void> hojaNueva(int despuesDe, double ancho, double alto) async {
@@ -97,7 +97,7 @@ class PdfDoc {
       'w': ancho,
       'h': alto,
     });
-    await _refrescar();
+    _refrescar();
   }
 
   Future<void> guardar(String ruta) async {

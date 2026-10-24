@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
 
   file_picker: ^10.3.10
+  ffi: ^2.1.0
 
   # Motor de scripts (d4rt): corre las GUI/flows del APK.
   d4rt: ^0.2.4

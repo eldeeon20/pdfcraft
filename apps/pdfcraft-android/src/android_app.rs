@@ -32,7 +32,7 @@ pub fn start(android_app: android_activity::AndroidApp) {
         options,
         Box::new(move |cc| {
             let mut app = PdfCraftApp::new();
-            if let Some(json) = cc.storage.as_ref().and_then(|s| s.get_string("pdfcraft")) {
+            if let Some(json) = cc.storage.and_then(|s| s.get_string("pdfcraft")) {
                 app.restore(&json);
             }
             // A PDF chosen with the system picker (Kotlin side) is dropped here before the
@@ -58,7 +58,7 @@ pub fn start(android_app: android_activity::AndroidApp) {
                 app.enable_recovery(pdfcraft_ui_egui::RecoveryStore::new(dir.join("PdfCraft").join("Recovery")));
             }
 
-            if let Some(rs) = cc.wgpu_render_state.clone() {
+            if let Some(rs) = &cc.wgpu_render_state {
                 let info = rs.adapter.get_info();
                 log::info!("pdfcraft-android: wgpu backend {:?} on {}", info.backend, info.name);
             }

@@ -14,7 +14,6 @@ import android.provider.Settings
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
-import android.view.WindowManager
 import android.widget.Toast
 import java.io.File
 
@@ -52,11 +51,9 @@ class PdfCraftActivity : NativeActivity() {
         if (hasFocus) applyOrientationMode()
     }
 
-    /// Portrait: the page owns the screen (immersive). Landscape: a normal window with
-    /// the system bars visible, so the OS can resize or split the app.
+    /// The app stays immersive in both orientations; the editor also owns the full screen.
     private fun applyOrientationMode() {
-        val portrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-        if (portrait) enterImmersive() else leaveImmersive()
+        enterImmersive()
     }
 
     private fun enterImmersive() {
@@ -76,22 +73,6 @@ class PdfCraftActivity : NativeActivity() {
                     or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                     or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 )
-        }
-    }
-
-    private fun leaveImmersive() {
-        // The theme starts fullscreen; clear that flag before asking the bars to show.
-        @Suppress("DEPRECATION")
-        window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.setDecorFitsSystemWindows(true)
-            window.insetsController?.let {
-                it.show(WindowInsets.Type.systemBars())
-                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_DEFAULT
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
         }
     }
 

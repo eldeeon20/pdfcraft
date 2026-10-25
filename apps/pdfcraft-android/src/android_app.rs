@@ -111,7 +111,7 @@ impl eframe::App for MobileShell {
         self.app.ui(ui, frame);
 
         // 3. The way back out of full screen, then the in-app file picker.
-        if state.full_screen {
+        if state.full_screen && self.app.has_document() {
             mobile::render_fullscreen_exit(&mut self.app, &ctx, &mut state);
         }
         mobile::render_picker(&ctx, &mut state);

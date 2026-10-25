@@ -1057,6 +1057,11 @@ impl PdfCraftApp {
         self.viewer_mode = on;
     }
 
+    /// Whether a document is open (the mobile shell shows its full-screen controls only then).
+    pub fn has_document(&self) -> bool {
+        self.active.is_some()
+    }
+
     /// Answer the password prompt (`None` cancels).
     pub fn submit_password(&mut self, password: Option<String>) {
         let Some(p) = self.password_prompt.take() else { return };

@@ -35,7 +35,7 @@ pub fn set_viewer_mode(on: bool) {
                     &class,
                     &name,
                     &sig,
-                    &[jni::objects::JValue::Bool(on as u8)],
+                    &[jni::objects::JValue::Bool(on)],
                 )?;
                 Ok(())
             });

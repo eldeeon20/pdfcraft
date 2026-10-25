@@ -203,7 +203,7 @@ impl Draft {
 }
 
 fn row<T>(ui: &mut egui::Ui, label: &str, c: &mut Change<T>, edit: impl FnOnce(&mut egui::Ui, &mut T)) {
-    ui.checkbox(&mut c.apply, tl!(label));
+    ui.add(widgets::checkbox(&mut c.apply, tl!(label)));
     // Colour swatches contain their own grid; give every property's editor a separate
     // namespace so border and fill controls do not share widget identities.
     ui.push_id(label, |ui| ui.add_enabled_ui(c.apply, |ui| edit(ui, &mut c.value)));
@@ -248,7 +248,7 @@ fn bool_row(ui: &mut egui::Ui, label: &str, c: &mut Change<bool>) {
 fn color(ui: &mut egui::Ui, value: &mut Option<[f64; 3]>) {
     ui.horizontal(|ui| {
         let mut none = value.is_none();
-        if ui.checkbox(&mut none, tl!("No color")).changed() {
+        if ui.add(widgets::checkbox(&mut none, tl!("No color"))).changed() {
             *value = if none { None } else { Some([0.0; 3]) };
         }
         if let Some(c) = crate::comments::swatch_grid(ui, *value) {
@@ -283,7 +283,7 @@ pub(crate) fn body(ui: &mut egui::Ui, d: &mut Draft, t: &theme::Tokens) -> (bool
         egui::Grid::new("bulk-field-properties").num_columns(3).spacing([16.0, 10.0]).show(ui, |ui| match d.tab {
             Tab::General => {
                 row(ui, "Tooltip:", &mut d.tooltip, |ui, v| {
-                    ui.add(egui::TextEdit::singleline(v).desired_width(280.0));
+                    ui.add(egui::TextEdit::singleline(v).desired_width(280.0)).accessible_name(tl!("Tooltip"));
                 });
                 bool_row(ui, "Read Only", &mut d.read_only);
                 bool_row(ui, "Required", &mut d.required);

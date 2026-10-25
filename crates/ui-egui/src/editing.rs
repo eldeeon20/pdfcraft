@@ -2,7 +2,7 @@
 //! "save changes?" prompt when closing a tab or quitting with unsaved edits.
 
 use pdfcraft_engine::Edit;
-use pdfcraft_platform::staging::{StagingName, create_staging, staging_suffixes};
+use pdfcraft_platform::staging::{StagingName, staging_suffixes};
 
 use crate::PdfCraftApp;
 use crate::rfd;
@@ -19,6 +19,17 @@ pub enum CloseRequest {
     All,
 }
 
+/// A save held back by [`Dialog::OverwriteChanged`](crate::Dialog::OverwriteChanged): the file
+/// on disk is another version than the document came from (#2166).
+#[cfg(not(target_arch = "wasm32"))]
+pub struct PendingOverwrite {
+    pub id: pdfcraft_engine::DocId,
+    pub dest: String,
+    target: SaveTarget,
+    /// What was to run once the document is written (close its tab, quit).
+    after: Box<dyn FnOnce(&mut PdfCraftApp) + Send>,
+}
+
 /// Where Save writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveTarget {
@@ -28,21 +39,103 @@ pub enum SaveTarget {
     As,
 }
 
+/// Text typed into a new text box that isn't added to the page yet.
+fn new_text_typed(v: &crate::DocView) -> bool {
+    v.content.draft.as_ref().is_some_and(|d| d.index.is_none() && !d.text.trim().is_empty())
+}
+
 impl PdfCraftApp {
     /// Apply an edit to the active document. Returns `true` on success; failures are shown.
     pub fn apply_edit(&mut self, edit: Edit) -> bool {
         let Some((i, id)) = self.active_ids() else { return false };
         let label = edit.label();
+        let (form_before, page_count_before, had_xfa) = if let Some(d) = self.session.get(id) {
+            (Some(std::sync::Arc::clone(&d.form)), d.info.pages.len(), d.xfa.is_some())
+        } else {
+            (None, 0, false)
+        };
         match self.session.apply(id, edit.clone()) {
             Ok(()) => {
                 let Some(doc) = self.session.get(id) else { return true };
                 let info = &doc.info;
                 let view = &mut self.views[i];
+                view.applied_editor = None;
+                // A picture picked with the Select tool may be the one this edit removed or moved:
+                // drop its highlight now, not on the next frame (which only comes with the next input).
+                view.picked_image = None;
+                if let Some(ctx) = &self.ctx {
+                    ctx.request_repaint();
+                }
+                if matches!(edit, Edit::AddAnnotation(_)) {
+                    // A released drawing's raster can come now: it will have the annotation.
+                    view.comments.drawings_committed();
+                } else {
+                    // Only a new drawing waits on its raster; any other edit may remove or move it.
+                    view.comments.settling.clear();
+                }
                 view.signature_drag.committed(&edit, doc.edit_generation());
-                match comment_page(&edit) {
-                    // Comment edits change one page: keep every other raster.
-                    Some(page) => view.page_changed(page),
-                    None => view.document_changed(info),
+                view.move_background.committed(&edit, doc.edit_generation());
+                view.text_background.committed(&edit);
+                if let Some(page) = comment_page(&edit).or_else(|| content_page(&edit)) {
+                    // Comment and content edits change one page: keep every other raster.
+                    view.page_changed(page);
+                } else if let Some(form_before) = form_before
+                    && doc.info.pages.len() == page_count_before
+                    && doc.xfa.is_some() == had_xfa
+                    && doc.xfa.is_none()
+                    && is_form_edit(&edit)
+                {
+                    let mut changed_pages = std::collections::BTreeSet::new();
+                    for f in doc.form.iter() {
+                        match form_before.iter().find(|old| old.name == f.name) {
+                            Some(old) => {
+                                if old != f {
+                                    for w in &f.widgets {
+                                        if let Some(p) = w.page {
+                                            changed_pages.insert(p);
+                                        }
+                                    }
+                                    for w in &old.widgets {
+                                        if let Some(p) = w.page {
+                                            changed_pages.insert(p);
+                                        }
+                                    }
+                                    if old.value != f.value {
+                                        for w in &f.widgets {
+                                            if let Some(p) = w.page {
+                                                view.forms.unbaked.insert((f.name.clone(), p));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                                for w in &f.widgets {
+                                    if let Some(p) = w.page {
+                                        changed_pages.insert(p);
+                                        view.forms.unbaked.insert((f.name.clone(), p));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for old in form_before.iter() {
+                        if !doc.form.iter().any(|f| f.name == old.name) {
+                            for w in &old.widgets {
+                                if let Some(p) = w.page {
+                                    changed_pages.insert(p);
+                                }
+                            }
+                        }
+                    }
+                    for page in changed_pages {
+                        view.page_changed(page);
+                    }
+                } else {
+                    view.document_changed(info);
+                }
+                if matches!(edit, Edit::AddAnnotation(_)) {
+                    view.comments.comment_added();
                 }
                 // Keep the pages the user acted on selected, where they now are.
                 match edit {
@@ -50,6 +143,11 @@ impl PdfCraftApp {
                         let n = pages.iter().collect::<std::collections::BTreeSet<_>>().len();
                         let to = to.min(info.pages.len() - n);
                         view.select_pages(&(to..to + n).collect::<Vec<_>>());
+                    }
+                    Edit::DuplicatePages { pages, at: Some(at) } => {
+                        let n = pages.iter().collect::<std::collections::BTreeSet<_>>().len();
+                        let at = at.min(info.pages.len().saturating_sub(n));
+                        view.select_pages(&(at..at + n).collect::<Vec<_>>());
                     }
                     Edit::InsertBlankPage { at, .. } => view.select_pages(&[at.min(info.pages.len() - 1)]),
                     Edit::DeletePages { .. } => view.select_pages(&[]),
@@ -63,16 +161,16 @@ impl PdfCraftApp {
                     }
                     Edit::AddAnnotation(a) => {
                         // Select the new comment (appended last among the page's comments).
-                        let newest = info.annotations.iter().filter(|x| x.page == a.page && x.in_reply_to.is_none()).map(|x| x.index).max();
+                        let newest = info.annotations.iter().filter(|x| x.page == a.page && !x.is_reply()).map(|x| x.index).max();
                         view.comments.selected = newest.map(|n| (a.page, n));
                         view.comments.reveal = true;
                         // A new highlight opens its note for typing straight away, as in Acrobat,
                         // unless a note typed into another card is still unsaved.
                         if let (pdfcraft_engine::Shape::TextMarkup { kind: pdfcraft_engine::Markup::Highlight, .. }, Some(n)) = (&a.shape, newest)
                             && a.contents.is_empty()
-                            && view.comments.editing.as_ref().is_none_or(|(_, _, text)| text.is_empty())
+                            && view.comments.editing.is_none()
                         {
-                            view.comments.editing = Some((a.page, n, String::new()));
+                            view.comments.open_editor(a.page, n, String::new());
                         }
                     }
                     Edit::DeleteAnnotation { .. } => view.comments.selected = None,
@@ -81,12 +179,31 @@ impl PdfCraftApp {
                 if std::mem::take(&mut view.comments.tool_done) && !self.comment_prefs.pinned {
                     self.quick_tool = crate::QuickTool::Select;
                 }
+                // Text saved as typed but drawn with `?` (its font can't draw it): said, not silent.
+                // Before the scripts' output, so an alert they raise still shows.
+                if let Some(n) = self.session.get(id).and_then(|d| d.edit_notices.first()).cloned() {
+                    self.notify(crate::content_ui::undrawn_message(&n));
+                }
                 let out = self.session.take_js_output(id);
                 self.handle_js(id, out);
                 true
             }
             Err(e) => {
-                self.notify_fmt("{label} failed: {e}", &[("label", &crate::i18n::action_label(&label)), ("e", &e.to_string())]);
+                if let Some(view) = self.views.get_mut(i) {
+                    // A drawing whose annotation wasn't added must not stay painted.
+                    view.comments.drawings_refused();
+                    // A paragraph that couldn't be applied opens again with its typing, instead of
+                    // the box the click moved to.
+                    if let Edit::EditTextBlock { page, block, .. } = &edit
+                        && let Some(mut ed) = view.applied_editor.take().filter(|ed| (ed.page, ed.block) == (*page, *block))
+                    {
+                        ed.focus = true;
+                        view.line_editor = Some(ed);
+                        view.pending_text_open = None;
+                    }
+                }
+                let message = if matches!(edit, Edit::MoveObjects { .. }) { crate::object_ui::move_error(&e) } else { e.to_string() };
+                self.notify_fmt("{label} failed: {e}", &[("label", &crate::i18n::edit_label(&label)), ("e", &message)]);
                 false
             }
         }
@@ -94,6 +211,13 @@ impl PdfCraftApp {
 
     /// Undo the last change: to the Combine files list while its tab shows, else the document.
     pub fn undo(&mut self) {
+        // While a polygon, cloud or run of connected lines is being drawn, Undo takes back its
+        // last point instead of the last finished edit.
+        if let Some((i, _)) = self.active_ids()
+            && self.views[i].comments.undo_point()
+        {
+            return;
+        }
         if self.combine_showing() {
             self.combine_history_step(true);
         } else {
@@ -118,7 +242,7 @@ impl PdfCraftApp {
                     self.views[i].document_changed(&doc.info);
                 }
                 self.views[i].comments.selected = None;
-                let label = crate::i18n::action_label(&label);
+                let label = crate::i18n::edit_label(&label);
                 if undo {
                     self.notify_fmt("Undid {label}", &[("label", &label)]);
                 } else {
@@ -141,16 +265,133 @@ impl PdfCraftApp {
         match self.views.get_mut(i).and_then(|v| v.pending_action.take()) {
             Some(crate::canvas::ViewAction::InsertFromFile) => self.insert_from_file_dialog(),
             Some(crate::canvas::ViewAction::InsertFromFileAt(at)) => self.insert_from_file_at(Some(at)),
+            Some(crate::canvas::ViewAction::ReplacePages) => self.replace_pages_dialog(),
             Some(crate::canvas::ViewAction::Save) => {
                 self.save_active(SaveTarget::InPlace);
             }
             Some(crate::canvas::ViewAction::Extract) => self.open_extract_dialog(),
             Some(crate::canvas::ViewAction::Split) => self.dialog = Some(crate::Dialog::Split),
+            Some(crate::canvas::ViewAction::SplitBeforeSelected) => {
+                self.split_draft.mode = crate::SplitMode::Selection;
+                self.dialog = Some(crate::Dialog::Split);
+            }
             Some(crate::canvas::ViewAction::CopyPages { cut }) => self.copy_pages(cut),
             Some(crate::canvas::ViewAction::PastePages) => self.paste_pages(),
+            Some(crate::canvas::ViewAction::EnhanceCamera) => self.enhance_camera(i),
+            Some(crate::canvas::ViewAction::CancelCamera) => self.leave_camera(i),
+            Some(crate::canvas::ViewAction::CameraRotate { clockwise }) => {
+                if let Some(done) = self.views.get(i).and_then(|v| v.camera_done) {
+                    let degrees = if clockwise { 90 } else { -90 };
+                    if self.apply_edit(Edit::RotatePages { pages: vec![done.page], degrees })
+                        && let Some(d) = self.views.get_mut(i).and_then(|v| v.camera_done.as_mut())
+                    {
+                        d.turns += degrees;
+                        d.steps += 1;
+                    }
+                }
+            }
+            Some(crate::canvas::ViewAction::CameraLevel) => self.camera_level(i),
+            Some(crate::canvas::ViewAction::CameraNext(command)) => {
+                self.leave_camera(i);
+                self.execute(command);
+            }
             None => {}
         }
         applied
+    }
+
+    /// Enhance ▸ Camera image ▸ clean-up slider: undo the enhancement (and the turns made since)
+    /// and enhance again from the photo at the new level, turning it as before. Only when the
+    /// top of the undo history is still those steps; otherwise the slider goes back.
+    fn camera_level(&mut self, i: usize) {
+        let Some(view) = self.views.get(i) else { return };
+        let (id, Some(done)) = (view.id, view.camera_done) else { return };
+        let ours = |s: &pdfcraft_engine::Session, k: usize| {
+            let label = s.get(id).and_then(|d| d.can_undo().map(str::to_owned));
+            let want = if k + 1 == done.steps { "Enhance camera image" } else { "Rotate page" };
+            label.as_deref() == Some(want)
+        };
+        // Undo the run this tool applied, checking each step's label first. If the run was
+        // broken (another edit came in between), redo what was undone and leave the page alone:
+        // enhancing a page that is still straightened would warp it a second time.
+        let restore = |app: &mut Self| {
+            if let Some(d) = app.views.get_mut(i).and_then(|v| v.camera_done.as_mut()) {
+                (d.look, d.level) = d.applied;
+            }
+        };
+        let mut undone = 0;
+        while undone < done.steps && ours(&self.session, undone) && self.session.undo(id).is_ok() {
+            undone += 1;
+        }
+        if undone < done.steps {
+            for _ in 0..undone {
+                if self.session.redo(id).is_err() {
+                    break;
+                }
+            }
+            restore(self);
+            return;
+        }
+        let result = self.session.enhance_camera_page_at(id, done.page, done.corners, done.look, done.level).and_then(|()| {
+            let turn = done.turns.rem_euclid(360);
+            if turn == 0 { Ok(1) } else { self.session.apply(id, Edit::RotatePages { pages: vec![done.page], degrees: turn }).map(|()| 2) }
+        });
+        if let (Some(doc), Some(view)) = (self.session.get(id), self.views.get_mut(i)) {
+            view.document_changed(&doc.info);
+            if let Some(d) = view.camera_done.as_mut() {
+                match result {
+                    Ok(steps) => {
+                        d.applied = (d.look, d.level);
+                        d.steps = steps;
+                    }
+                    Err(_) => (d.look, d.level) = d.applied,
+                }
+            }
+        }
+        if let Err(e) = result {
+            let label = crate::i18n::action_label("Enhance camera image");
+            self.notify_fmt("{label} failed: {e}", &[("label", &label), ("e", &e.to_string())]);
+        }
+    }
+
+    /// Leave Enhance ▸ Camera image on tab `i`.
+    fn leave_camera(&mut self, i: usize) {
+        if let Some(view) = self.views.get_mut(i) {
+            view.camera = None;
+            view.camera_done = None;
+        }
+        if self.quick_tool == crate::QuickTool::EnhanceCamera {
+            self.quick_tool = crate::QuickTool::Select;
+        }
+    }
+
+    /// Enhance ▸ Camera image: straighten what the corners on tab `i` enclose. On success the
+    /// bar offers rotate, crop and organize for the page; on failure the corners stay so they
+    /// can be adjusted.
+    fn enhance_camera(&mut self, i: usize) {
+        let Some(view) = self.views.get(i) else { return };
+        let (id, Some(q)) = (view.id, view.camera) else { return };
+        let Some(page) = self.session.get(id).and_then(|d| d.info.pages.get(q.page).cloned()) else { return };
+        let corners = q.corners.map(|[x, y]| {
+            let [u, v] = page.view_to_user(x, y);
+            [u as f64, v as f64]
+        });
+        let (look, level) = (crate::camera_ui::Look::Colour, crate::camera_ui::DEFAULT_LEVEL);
+        match self.session.enhance_camera_page_at(id, q.page, corners, look, level) {
+            Ok(()) => {
+                // The tool stays open with the clean-up slider, rotate, crop and organize.
+                if let (Some(doc), Some(view)) = (self.session.get(id), self.views.get_mut(i)) {
+                    view.document_changed(&doc.info);
+                    view.camera = None;
+                    view.camera_done =
+                        Some(crate::camera_ui::CameraDone { page: q.page, corners, look, level, applied: (look, level), turns: 0, steps: 1 });
+                }
+            }
+            Err(e) => {
+                let label = crate::i18n::action_label("Enhance camera image");
+                self.notify_fmt("{label} failed: {e}", &[("label", &label), ("e", &e.to_string())]);
+            }
+        }
     }
 
     /// Organize ▸ Copy / Cut: remember the selected pages (the document as it is now); Cut also
@@ -168,7 +409,7 @@ impl PdfCraftApp {
             self.notify_tr("A document needs at least one page: copy instead");
             return;
         }
-        self.page_clipboard = Some(crate::PageClip { name: doc.name.clone(), bytes: doc.bytes.clone(), pages: pages.clone() });
+        self.page_clipboard = Some(crate::PageClip { from: id, name: doc.name.clone(), bytes: doc.bytes.clone(), pages: pages.clone() });
         if cut {
             self.apply_edit(Edit::DeletePages { pages: pages.clone() });
         }
@@ -189,7 +430,17 @@ impl PdfCraftApp {
         let Some(i) = self.active else { return };
         let at = self.views[i].target_pages().into_iter().max().map_or(0, |p| p + 1);
         let count = clip.pages.len();
-        if self.apply_edit(Edit::InsertPagesFrom { name: clip.name.clone(), bytes: clip.bytes.clone(), pages: Some(clip.pages.clone()), at }) {
+        // Pasting into the document the pages came from is a duplicate (or, after Cut, a move):
+        // its fields keep their names. Pasting into another document renames colliding ones.
+        let field_conflicts =
+            if self.views[i].id == clip.from { pdfcraft_engine::FieldConflicts::Merge } else { pdfcraft_engine::FieldConflicts::Rename };
+        if self.apply_edit(Edit::InsertPagesFrom {
+            name: clip.name.clone(),
+            bytes: clip.bytes.clone(),
+            pages: Some(clip.pages.clone()),
+            at,
+            field_conflicts,
+        }) {
             self.views[i].select_pages(&(at..at + count).collect::<Vec<_>>());
         }
     }
@@ -238,6 +489,19 @@ impl PdfCraftApp {
             _ => false,
         };
         if self.apply_edit(edit) {
+            // Tab can wrap to the same field (including another widget of that field).
+            // Its new editor was opened before this edit ran, so it still holds the old
+            // value. Refresh from the accepted form before Save can commit that stale draft.
+            if typed
+                && let Some(view) = self.views.get_mut(i)
+                && let Some(focus) = view.forms.focus.as_mut()
+                && focus.request_focus
+                && committed.as_ref().is_some_and(|draft| draft.name == focus.name)
+                && let Some(field) = self.session.get(view.id).and_then(|doc| doc.form.iter().find(|field| field.name == focus.name))
+            {
+                focus.text = crate::forms_ui::draft_text(field);
+                focus.picked = field.value.clone();
+            }
             if let Some(page) = signature_page
                 && let Some(view) = self.views.get_mut(i)
             {
@@ -246,7 +510,7 @@ impl PdfCraftApp {
                 let newest = self
                     .session
                     .get(view.id)
-                    .and_then(|d| d.info.annotations.iter().filter(|a| a.page == page && a.in_reply_to.is_none()).map(|a| a.index).max());
+                    .and_then(|d| d.info.annotations.iter().filter(|a| a.page == page && !a.is_reply()).map(|a| a.index).max());
                 view.comments.selected = newest.map(|index| (page, index));
                 view.comments.reveal = true;
                 self.quick_tool = crate::QuickTool::Select;
@@ -283,17 +547,44 @@ impl PdfCraftApp {
             self.notify(crate::content_ui::undrawable_message(c));
             return false;
         }
-        let typing = self
-            .views
-            .get(i)
-            .is_some_and(|v| v.pending_edit.is_some() || v.forms.focus.is_some() || v.fill_text.as_ref().is_some_and(|t| !t.text.trim().is_empty()));
+        let typing = self.views.get(i).is_some_and(|v| {
+            v.pending_edit.is_some()
+                || v.forms.focus.is_some()
+                || v.content.draft.is_some()
+                || v.line_editor.as_ref().is_some_and(|ed| ed.has_changes())
+                || v.fill_text.as_ref().is_some_and(|t| !t.text.trim().is_empty())
+        });
         if self.active != Some(i) {
             if !typing {
                 return true;
             }
             self.active = Some(i);
         }
-        self.commit_form_typing() && self.commit_open_fill_text(id)
+        self.commit_form_typing() && self.commit_open_fill_text(id) && self.commit_open_text_edits(id)
+    }
+
+    /// The Edit a PDF ▸ Text boxes (new text, and a paragraph open for editing) commit on
+    /// click-away. Save does that first, so the typed text is in the file instead of being left
+    /// open on the screen (#3496).
+    fn commit_open_text_edits(&mut self, id: pdfcraft_engine::DocId) -> bool {
+        let Some(doc) = self.session.get(id) else { return true };
+        let Some(view) = self.views.iter_mut().find(|v| v.id == id) else { return true };
+        // Both are taken out of the view before either edit runs, so keep what is needed to put
+        // back whichever one the document refuses: typed text must not be lost.
+        let (draft, select_added, editor) = (view.content.draft.clone(), view.content.select_added, view.line_editor.clone());
+        let added = view.content.finish_draft(doc.added());
+        let paragraph = view.line_editor.take_if(|ed| ed.has_changes()).and_then(crate::edit_text_ui::finished_edit);
+        let added_ok = added.is_none_or(|edit| self.apply_edit(edit));
+        let paragraph_ok = paragraph.is_none_or(|edit| self.apply_edit(edit));
+        if let Some(view) = self.views.iter_mut().find(|v| v.id == id) {
+            if !added_ok {
+                (view.content.draft, view.content.select_added) = (draft, select_added);
+            }
+            if !paragraph_ok {
+                view.line_editor = editor;
+            }
+        }
+        added_ok && paragraph_ok
     }
 
     /// The Fill & Sign type box commits on click-away. Save does that first, so the text is in
@@ -309,7 +600,8 @@ impl PdfCraftApp {
             return true;
         }
         let author = self.comment_prefs.author.clone();
-        let edit = crate::fill_sign::typed(tb.page, tb.at, &text, &author);
+        let rotation = self.session.get(id).map_or(0, |doc| crate::comments::page_rotation(&doc.info, tb.page));
+        let edit = crate::fill_sign::typed(tb.page, tb.at, &text, tb.size, rotation, &author);
         if self.apply_edit(edit) {
             if let Some(view) = self.views.get_mut(i) {
                 view.fill_text = None;
@@ -350,6 +642,8 @@ impl PdfCraftApp {
             || v.content.blocked().is_some()
             || v.forms.focus.as_ref().is_some_and(|f| crate::forms_ui::draft_edit(f, &doc.form).is_some())
             || v.fill_text.as_ref().is_some_and(|t| !t.text.trim().is_empty())
+            || new_text_typed(v)
+            || v.line_editor.as_ref().map_or_else(|| false, |ed| ed.has_unsaved_text())
     }
 
     /// Save the active document. Returns `true` if it was written.
@@ -381,30 +675,28 @@ impl PdfCraftApp {
         let (name, path) = (doc.name.clone(), doc.path.clone());
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let doc_path = path.clone();
             let destination = match (target, path, &self.save_override) {
                 (_, _, Some(p)) => p.clone(),
-                (SaveTarget::InPlace, Some(p), _) => p,
+                // An email attachment's temporary copy is no place to keep work: ask, as for a new
+                // document (`is_mail_temp_copy`).
+                (SaveTarget::InPlace, Some(p), _) if !is_mail_temp_copy(&p) => p,
                 _ => {
                     let name = if name.to_ascii_lowercase().ends_with(".pdf") { name } else { format!("{name}.pdf") };
                     let dialog = rfd::AsyncFileDialog::new().add_filter("PDF", &["pdf"]).set_file_name(name);
+                    let dialog = in_document_folder(dialog, doc_path.as_deref());
                     // The bytes are taken once the user has chosen, so edits made meanwhile are saved too.
                     self.ask_one(crate::pickers::Ask::Save(dialog), None, move |app, dest| {
-                        if app.save_doc_to(id, &dest.to_string_lossy()) {
-                            after(app);
-                        }
+                        app.save_doc_to_then(id, &dest.to_string_lossy(), target, Box::new(after));
                     });
                     return false;
                 }
             };
-            let saved = self.save_doc_to(id, &destination);
-            if saved {
-                after(self);
-            }
-            saved
+            self.save_doc_to_then(id, &destination, target, Box::new(after))
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = (target, path);
+            let _ = path;
             if !self.flatten_fill_sign_for_save(id) {
                 return false;
             }
@@ -415,15 +707,31 @@ impl PdfCraftApp {
                     return false;
                 }
             };
-            match download(&name, &bytes) {
+            // An embedding page that asked for saves (`?host=parent`) gets the bytes; otherwise
+            // the browser downloads them.
+            let to_host = self.host_save.is_some();
+            let delivered = match &self.host_save {
+                Some(save) => save(&name, &bytes, matches!(target, SaveTarget::As)),
+                None => download(&name, &bytes),
+            };
+            match delivered {
                 Ok(()) => {
                     let _ = self.session.mark_saved(id, bytes, None);
-                    if let Some(doc) = self.session.get(id) {
-                        self.views[index].document_changed(&doc.info);
+                    if let Some(doc) = self.session.get(id)
+                        && let Some(view) = self.views.get_mut(index)
+                    {
+                        view.document_changed(&doc.info);
                     }
-                    self.notify_fmt("Downloaded {name}", &[("name", &name)]);
+                    // The host reports where the file went (and any failure) itself.
+                    if !to_host {
+                        self.notify_fmt("Downloaded {name}", &[("name", &name)]);
+                    }
                     after(self);
                     true
+                }
+                Err(e) if to_host => {
+                    self.notify_fmt("Couldn't save {name}: {e}", &[("name", &name), ("e", &e)]);
+                    false
                 }
                 Err(e) => {
                     self.notify_fmt("Couldn't download {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
@@ -433,19 +741,67 @@ impl PdfCraftApp {
         }
     }
 
+    /// [`Self::save_doc_to`], then `after`. When `dest` is the document's own file and it is
+    /// another version on disk than the one the document came from (something else wrote it
+    /// since the open or the last save, #2166), it asks first: the save waits in
+    /// `pending_overwrite` behind [`Dialog::OverwriteChanged`](crate::Dialog::OverwriteChanged).
+    /// Returns `true` if written now.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_doc_to_then(&mut self, id: pdfcraft_engine::DocId, dest: &str, target: SaveTarget, after: Box<dyn FnOnce(&mut Self) + Send>) -> bool {
+        let own = self.session.get(id).and_then(|d| d.path.as_deref()).is_some_and(|p| crate::same_file(p, dest));
+        if own && self.watch.disk_differs(id, dest, self.session.get(id).map(|d| d.saved_bytes())) {
+            self.pending_overwrite = Some(PendingOverwrite { id, dest: dest.to_string(), target, after });
+            self.dialog = Some(crate::Dialog::OverwriteChanged);
+            return false;
+        }
+        let saved = self.save_doc_to(id, dest, target);
+        if saved {
+            after(self);
+        }
+        saved
+    }
+
+    /// The dialog's Save anyway: write over the changed file.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn overwrite_changed_file(&mut self) {
+        let Some(p) = self.pending_overwrite.take() else { return };
+        if self.save_doc_to(p.id, &p.dest, p.target) {
+            (p.after)(self);
+        }
+    }
+
+    /// The dialog's Save as…: leave the file on disk as it is and ask where to put this version.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn save_changed_file_elsewhere(&mut self) {
+        let Some(p) = self.pending_overwrite.take() else { return };
+        if let Some(index) = self.views.iter().position(|v| v.id == p.id) {
+            self.save_then(index, SaveTarget::As, p.after);
+        }
+    }
+
     /// Write document `id` to `dest` and make it the document's file. Returns `true` if written.
     #[cfg(not(target_arch = "wasm32"))]
-    fn save_doc_to(&mut self, id: pdfcraft_engine::DocId, dest: &str) -> bool {
+    fn save_doc_to(&mut self, id: pdfcraft_engine::DocId, dest: &str, target: SaveTarget) -> bool {
         // Save As answers on a later frame: commit what was typed meanwhile, too (#166), even
         // if another tab is active by then.
         if !self.commit_typing_in(id) || !self.flatten_fill_sign_for_save(id) {
             return false;
         }
-        let Some(name) = self.session.get(id).map(|d| d.name.clone()) else {
+        let Some((name, full)) = self.session.get(id).map(|d| {
+            // Save As to another file is a clean copy, without the earlier revisions that still
+            // hold deleted pages or replaced text (#2165). A signed document stays incremental so
+            // its signatures keep covering the file.
+            let full = target == SaveTarget::As
+                && !d.path.as_deref().is_some_and(|p| crate::same_file(p, dest))
+                && d.read_only_reason.is_none()
+                && !d.is_signed();
+            (d.name.clone(), full)
+        }) else {
             self.notify_tr("The document was closed before it could be saved.");
             return false;
         };
-        let bytes = match self.session.save_bytes(id) {
+        let bytes = if full { self.session.save_full_bytes(id) } else { self.session.save_bytes(id) };
+        let bytes = match bytes.and_then(|b| self.session.check_save(id, &b).map(|()| b)) {
             Ok(b) => b,
             Err(e) => {
                 self.notify_fmt("Couldn't save {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
@@ -456,6 +812,8 @@ impl PdfCraftApp {
             self.notify_fmt("Couldn't save {name}: {e}", &[("name", dest), ("e", &e.to_string())]);
             return false;
         }
+        // Our own write is not a change on disk to reload (#431).
+        self.watch.known_now(id, dest);
         match self.session.mark_saved(id, bytes, Some(dest.to_string())) {
             Ok(()) => {
                 self.forget_recovery(id);
@@ -463,8 +821,12 @@ impl PdfCraftApp {
                     && let Some(view) = self.views.iter_mut().find(|v| v.id == id)
                 {
                     view.document_changed(&doc.info);
+                    // Saving over a version that changed on disk keeps this one: nothing to ask.
+                    view.disk_changed = false;
                 }
                 self.notify_fmt("Saved {name}", &[("name", &short_name(dest))]);
+                #[cfg(target_os = "macos")]
+                crate::macos_association::repair(std::path::Path::new(dest));
                 true
             }
             Err(e) => {
@@ -512,6 +874,7 @@ impl PdfCraftApp {
                     // Otherwise a later Save could write a rejected draft back into the file.
                     view.forms.focus = None;
                     view.forms.committed = None;
+                    view.forms.unbaked.clear();
                     view.pending_edit = None;
                 }
                 self.notify_tr("Reverted to the last saved version");
@@ -528,6 +891,8 @@ impl PdfCraftApp {
     /// Answer the save prompt: `Some(true)` save, `Some(false)` discard, `None` cancel.
     pub fn resolve_close(&mut self, ctx: &egui::Context, choice: Option<bool>) {
         let Some(req) = self.close_request.take() else { return };
+        // The next question (another dirty document) starts on Save again.
+        self.save_prompt_button = Default::default();
         let index = match req {
             CloseRequest::Tab(id) => match self.views.iter().position(|v| v.id == id) {
                 Some(i) => i,
@@ -575,13 +940,32 @@ impl PdfCraftApp {
     /// Close tab `index` for a close request, then ask about the next dirty document, or quit.
     fn close_and_continue(&mut self, ctx: &egui::Context, index: usize, req: CloseRequest) {
         self.close_tab(index);
-        // A newer prompt wins: the user may have started another close while a save was pending.
+        // A newer prompt wins: the user may have started another close while a save was pending,
+        // and seen its question, which keeps counting as seen.
         if (req == CloseRequest::Quit || req == CloseRequest::All) && self.close_request.is_none() {
             match self.first_dirty() {
-                Some(_) => self.close_request = Some(req),
+                Some(_) => {
+                    // A question about the next document is a new one.
+                    self.save_prompt_seen = false;
+                    self.close_request = Some(req);
+                }
                 None if req == CloseRequest::Quit => self.quit(ctx),
                 None => {}
             }
+        }
+    }
+
+    /// Request a normal application exit, preserving every unsaved document until answered.
+    /// Returns false while the existing save/discard/cancel prompt needs a decision.
+    pub(crate) fn request_quit(&mut self, ctx: &egui::Context) -> bool {
+        if self.first_dirty().is_some() {
+            self.close_request = Some(CloseRequest::Quit);
+            ctx.request_repaint();
+            false
+        } else {
+            self.shutdown_recovery();
+            self.quit(ctx);
+            true
         }
     }
 
@@ -590,8 +974,25 @@ impl PdfCraftApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
+    /// Publish whether any document has unsaved work, for the browser's reload warning (#812).
+    pub(crate) fn sync_unsaved_flag(&self) {
+        self.unsaved_flag.store(self.first_dirty().is_some(), std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Intercept window close while documents have unsaved changes.
     pub(crate) fn guard_quit(&mut self, ctx: &egui::Context) {
+        // egui's default quit shortcut ignores extra Alt/Shift, including Ctrl+Alt+Q for '@'.
+        ctx.options_mut(|o| o.quit_shortcuts.clear());
+        let shortcut = ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(e, egui::Event::Key { key: egui::Key::Q, pressed: true, modifiers, .. }
+                    if modifiers.matches_exact(egui::Modifiers::COMMAND))
+            })
+        });
+        if shortcut {
+            self.request_quit(ctx);
+        }
+        self.sync_unsaved_flag();
         if !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
@@ -604,9 +1005,51 @@ impl PdfCraftApp {
             self.shutdown_recovery();
         }
     }
+
+    /// Ask for the user's attention when the "save changes?" question opens while PdfCraft is in
+    /// the background (Quit in the Dock menu, logging out, or an agent quitting), and withdraw the
+    /// request once the user comes back or the question is answered.
+    ///
+    /// The question holds up the quit the user asked for, so the request is critical, as AppKit
+    /// makes it for a modal panel that an inactive app presents: the Dock icon bounces until
+    /// PdfCraft is active, Windows flashes the taskbar button until the window is in front, and
+    /// X11 sets the urgency hint, which stays until it is reset. A question that opens in front
+    /// asks nothing, and neither does leaving it open: the user has seen it. Each document asked
+    /// about when quitting is a new question, so one that opens in the background asks even after
+    /// a question the user saw; a request that still stands carries over to it.
+    pub(crate) fn attend_save_prompt(&mut self, ctx: &egui::Context) {
+        let open = self.close_request.is_some();
+        let focused = ctx.input(|i| i.focused);
+        if self.save_prompt_attention {
+            if focused || !open {
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Reset));
+                self.save_prompt_attention = false;
+            }
+        } else if open && !self.save_prompt_seen && !focused {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical));
+            self.save_prompt_attention = true;
+        }
+        self.save_prompt_seen = open;
+    }
 }
 
-/// The page a comment edit changes (`None` for other edits).
+/// The single page a content edit changes (`None` for other edits). Like comment edits,
+/// these leave every other page's bytes, geometry and text alone, so their rasters stay valid.
+fn content_page(edit: &Edit) -> Option<usize> {
+    match edit {
+        Edit::MoveObjects { page, .. }
+        | Edit::EditTextLine { page, .. }
+        | Edit::EditTextBlock { page, .. }
+        | Edit::EditPageImage { page, .. }
+        | Edit::AddText { page, .. }
+        | Edit::AddImage { page, .. }
+        | Edit::UpdateContent { page, .. }
+        | Edit::DeleteContent { page, .. }
+        | Edit::ReplaceImage { page, .. } => Some(*page),
+        _ => None,
+    }
+}
+
 fn comment_page(edit: &Edit) -> Option<usize> {
     match edit {
         Edit::AddAnnotation(a) => Some(a.page),
@@ -615,10 +1058,73 @@ fn comment_page(edit: &Edit) -> Option<usize> {
         | Edit::ReplyToAnnotation { page, .. }
         | Edit::SetAnnotationStatus { page, .. }
         | Edit::MoveAnnotation { page, .. }
+        | Edit::ReshapeAnnotation { page, .. }
         | Edit::ResizeAnnotation { page, .. }
         | Edit::StyleAnnotation { page, .. }
+        | Edit::FillAnnotation { page, .. }
+        | Edit::FontSizeAnnotation { page, .. }
         | Edit::SetAnnotationInfo { page, .. } => Some(*page),
         _ => None,
+    }
+}
+
+/// Whether `edit` is a form-related modification.
+fn is_form_edit(edit: &Edit) -> bool {
+    matches!(
+        edit,
+        Edit::SetFieldValue { .. }
+            | Edit::ResetForm { .. }
+            | Edit::AddField { .. }
+            | Edit::DeleteField { .. }
+            | Edit::DuplicateField { .. }
+            | Edit::SetFieldProps { .. }
+            | Edit::SetFieldImage { .. }
+            | Edit::SetFieldScript { .. }
+            | Edit::SetCalculationOrder { .. }
+            | Edit::ApplyScriptChanges { .. }
+    )
+}
+
+/// Whether `path` is the temporary copy an email client opened an attachment from, so that Save
+/// asks where to keep the document instead of writing to it.
+///
+/// Outlook opens an attachment from its own cache: `INetCache\Content.Outlook\<random>\` for
+/// classic Outlook (`Temporary Internet Files\Content.Outlook\` on older Windows), and the
+/// `Packages\Microsoft.OutlookForWindows_<id>` package folder for the new Outlook. The patterns
+/// follow those layouts, so an ordinary folder that merely shares a name doesn't match. Saving there either fails,
+/// because Outlook can still hold the file, or appears to work while the edits stay out of the
+/// email and are deleted with the cache. Apple Mail opens one from `Mail Downloads/<UUID>/` in
+/// its sandbox container, where other apps can't write, so saving there fails (#2751). Matched on
+/// either separator and in any case, so it can be tested on every platform.
+pub(crate) fn is_mail_temp_copy(path: &str) -> bool {
+    let p = path.replace('\\', "/").to_ascii_lowercase();
+    // Outlook's cache holds `<marker><random folder>/<file>`: exactly one folder, then the file.
+    let in_outlook_cache = |marker: &str| {
+        p.split_once(marker)
+            .is_some_and(|(_, rest)| matches!(rest.split('/').collect::<Vec<_>>()[..], [dir, file] if !dir.is_empty() && !file.is_empty()))
+    };
+    in_outlook_cache("/inetcache/content.outlook/")
+        || in_outlook_cache("/temporary internet files/content.outlook/")
+        || p.contains("/packages/microsoft.outlookforwindows_")
+        || p.contains("/library/containers/com.apple.mail/data/library/mail downloads/")
+}
+
+/// The folder a Save As style dialog should open in for a document stored at `path`: the
+/// document's own folder, as Acrobat and Foxit do, instead of whichever folder the system picks.
+/// `None` (keep the system's choice) for a new document, a path with no parent, or an email
+/// attachment's temporary copy (`is_mail_temp_copy`), which is no place to keep work. Also right
+/// for UNC paths on Windows (`\\server\share\dir\f.pdf` gives `\\server\share\dir`).
+pub(crate) fn save_dialog_folder(path: Option<&str>) -> Option<std::path::PathBuf> {
+    let path = path.filter(|p| !is_mail_temp_copy(p))?;
+    let parent = std::path::Path::new(path).parent()?;
+    (!parent.as_os_str().is_empty()).then(|| parent.to_path_buf())
+}
+
+/// `dialog` opened in the folder of the document stored at `path` ([`save_dialog_folder`]).
+pub(crate) fn in_document_folder(dialog: rfd::AsyncFileDialog, path: Option<&str>) -> rfd::AsyncFileDialog {
+    match save_dialog_folder(path) {
+        Some(dir) => dialog.set_directory(dir),
+        None => dialog,
     }
 }
 
@@ -630,24 +1136,19 @@ pub fn write_atomically(path: &str, bytes: &[u8]) -> std::io::Result<()> {
 
 /// [`write_atomically`], trying the staging names that `suffixes` give.
 fn write_atomically_with(path: &str, bytes: &[u8], suffixes: impl IntoIterator<Item = u64>) -> std::io::Result<()> {
-    use std::io::Write;
-    let target = std::path::Path::new(path);
-    let dir = target.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
-    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("save");
-    let (tmp, f) = create_staging(dir, name, StagingName::TagThenSuffix, suffixes)?;
-    let result = (|| {
-        // Closed at the end of the block, before the rename.
-        {
-            let mut f = f;
-            f.write_all(bytes)?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&tmp, target)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    write_atomically_syncing(path, bytes, suffixes, std::fs::File::sync_all)
+}
+
+/// [`write_atomically_with`], flushing the staging file with `sync_all` (the standard library's
+/// in the app, a failing one in tests). The writer itself is the platform crate's, shared with
+/// the tools and the CLI (#2166); the desktop app keeps its staging-name form.
+fn write_atomically_syncing(
+    path: &str,
+    bytes: &[u8],
+    suffixes: impl IntoIterator<Item = u64>,
+    sync_all: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    pdfcraft_platform::staging::write_atomically_with(std::path::Path::new(path), bytes, StagingName::TagThenSuffix, suffixes, sync_all)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -685,7 +1186,11 @@ impl PdfCraftApp {
         let edit = match action {
             A::New => {
                 let n = self.session.get(id).map_or(0, |d| d.info.outline.len());
-                self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: "Untitled".into(), page: current });
+                // Where the reader is: the selection's corner, else the top of the window.
+                let (page, [left, top]) =
+                    self.session.get(id).and_then(|d| self.views.get(i)?.bookmark_position(&d.info)).unwrap_or((current, [None, None]));
+                let (left, top) = (left.map(f64::from), top.map(f64::from));
+                self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: "Untitled".into(), page, left, top });
                 // Like Acrobat: the new bookmark starts in rename mode.
                 self.bookmark_rename = Some((vec![n], "Untitled".into()));
                 self.right = Some(crate::RightPanel::Bookmarks);
@@ -698,6 +1203,8 @@ impl PdfCraftApp {
             }
             A::Rename(path, title) => Edit::RenameBookmark { path, title },
             A::SetToCurrentPage(path) => Edit::SetBookmarkPage { path, page: current },
+            A::SetStyle(path, bold, italic) => Edit::SetBookmarkStyle { path, bold, italic },
+            A::SetColor(path, color) => Edit::SetBookmarkColor { path, color: Some(color) },
             A::Delete(path) => Edit::DeleteBookmark { path },
             A::MoveUp(path) => {
                 let at = path[path.len() - 1].saturating_sub(1);
@@ -735,7 +1242,31 @@ fn bookmark_at<'a>(items: &'a [pdfcraft_render::OutlineItem], path: &[usize]) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{write_atomically, write_atomically_with};
+    use super::{SaveTarget, is_mail_temp_copy, save_dialog_folder, write_atomically, write_atomically_syncing, write_atomically_with};
+
+    #[test]
+    fn save_dialogs_open_in_the_documents_folder() {
+        use std::path::PathBuf;
+        assert_eq!(save_dialog_folder(Some("/home/a/plans/f.pdf")), Some(PathBuf::from("/home/a/plans")));
+        // A new document has no folder yet; a bare name has an empty parent; the root has none.
+        assert_eq!(save_dialog_folder(None), None);
+        assert_eq!(save_dialog_folder(Some("f.pdf")), None);
+        assert_eq!(save_dialog_folder(Some("/")), None);
+        // An email attachment's temporary copy is not offered.
+        assert_eq!(save_dialog_folder(Some("C:\\Users\\a\\AppData\\Local\\Microsoft\\Windows\\INetCache\\Content.Outlook\\AB12\\f.pdf")), None);
+        assert_eq!(save_dialog_folder(Some("/Users/a/Library/Containers/com.apple.mail/Data/Library/Mail Downloads/UUID/f.pdf")), None);
+    }
+
+    /// The Windows rules for `Path::parent` (UNC share roots included) only apply on Windows.
+    #[cfg(windows)]
+    #[test]
+    fn save_dialog_folder_handles_unc_paths() {
+        use std::path::PathBuf;
+        assert_eq!(save_dialog_folder(Some(r"\\nas\projets\2026\f.pdf")), Some(PathBuf::from(r"\\nas\projets\2026")));
+        assert_eq!(save_dialog_folder(Some(r"\\nas\projets\f.pdf")), Some(PathBuf::from(r"\\nas\projets\")));
+        assert_eq!(save_dialog_folder(Some(r"\\nas\projets")), None);
+        assert_eq!(save_dialog_folder(Some(r"C:\Users\a\f.pdf")), Some(PathBuf::from(r"C:\Users\a")));
+    }
     use pdfcraft_platform::staging::{STAGING_ATTEMPTS, staging_suffixes};
     use std::path::{Path, PathBuf};
 
@@ -872,8 +1403,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Windows refuses to replace a read-only file, so the rename fails: the staging file must not
-    /// be left behind.
+    /// A read-only target is refused before anything is staged, so no staging file is left
+    /// behind.
     #[cfg(windows)]
     #[test]
     fn a_failed_save_removes_the_staging_file() {
@@ -884,12 +1415,185 @@ mod tests {
         perms.set_readonly(true);
         std::fs::set_permissions(&target, perms.clone()).unwrap();
         let e = write_atomically_with(&target.to_string_lossy(), b"NEW", [7]).unwrap_err();
-        assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "the rename failed: {e}");
+        assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "a read-only target is refused: {e}");
         assert_eq!(read(&target), "OLD");
         assert_eq!(listing(&dir), ["out.pdf"], "the staging file was removed");
         #[allow(clippy::permissions_set_readonly_false)]
         perms.set_readonly(false);
         std::fs::set_permissions(&target, perms).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// On macOS `sync_all` asks for a full flush, which SMB and FUSE volumes (a Cryptomator vault,
+    /// #981) refuse as unsupported: ENOTSUP (45) or ENOTTY (25). The save still goes through.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_volume_without_full_flush_still_saves() {
+        for errno in [45, 25] {
+            let dir = staging_dir(&format!("nofullsync-{errno}"));
+            let target = dir.join("out.pdf");
+            std::fs::write(&target, "OLD").unwrap();
+            let asked = std::cell::Cell::new(false);
+            let refuse = |_: &std::fs::File| {
+                asked.set(true);
+                Err(std::io::Error::from_raw_os_error(errno))
+            };
+            write_atomically_syncing(&target.to_string_lossy(), b"NEW", [7], refuse).unwrap();
+            assert!(asked.get(), "the full flush was tried");
+            assert_eq!(read(&target), "NEW");
+            assert_eq!(listing(&dir), ["out.pdf"], "no staging file is left behind");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// Only "not supported" is let through: any other flush failure fails the save and keeps the
+    /// original.
+    #[test]
+    fn a_failed_flush_keeps_the_original() {
+        let dir = staging_dir("syncfails");
+        let target = dir.join("out.pdf");
+        std::fs::write(&target, "OLD").unwrap();
+        let e = write_atomically_syncing(&target.to_string_lossy(), b"NEW", [7], |_| Err(std::io::Error::other("disk gone"))).unwrap_err();
+        assert_eq!(e.to_string(), "disk gone");
+        assert_eq!(read(&target), "OLD");
+        assert_eq!(listing(&dir), ["out.pdf"], "the staging file was removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_save_preserves_opening_settings_changed_while_staging() {
+        let dir = staging_dir("opening-metadata-changed");
+        let target = dir.join("out.pdf");
+        std::fs::write(&target, b"OLD").unwrap();
+        xattr::set(&target, "com.apple.LaunchServices.OpenWith", b"old handler").unwrap();
+        xattr::set(&target, "com.apple.quarantine", b"0082;1234;Preview;").unwrap();
+        let suffixes = std::iter::once_with(|| {
+            xattr::set(&target, "com.apple.LaunchServices.OpenWith", b"new handler").unwrap();
+            xattr::set(&target, "com.apple.quarantine", b"0082;5678;another app;").unwrap();
+            7
+        });
+        write_atomically_with(&target.to_string_lossy(), b"NEW", suffixes).unwrap();
+        assert_eq!(read(&target), "NEW");
+        assert_eq!(xattr::get(&target, "com.apple.LaunchServices.OpenWith").unwrap(), Some(b"new handler".to_vec()));
+        assert_eq!(xattr::get(&target, "com.apple.quarantine").unwrap(), Some(b"0082;5678;another app;".to_vec()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn outlook_attachment_copies_are_recognised_on_either_separator_and_in_any_case() {
+        for p in [
+            r"C:\Users\me\AppData\Local\Microsoft\Windows\INetCache\Content.Outlook\AB12CD34\Quote.pdf",
+            r"c:\users\me\appdata\local\microsoft\windows\inetcache\content.outlook\ab12cd34\quote (2).pdf",
+            r"C:\Users\me\AppData\Local\Microsoft\Windows\Temporary Internet Files\Content.Outlook\AB12CD34\Quote.pdf",
+            r"C:\Users\me\AppData\Local\Packages\Microsoft.OutlookForWindows_8wekyb3d8bbwe\LocalCache\Quote.pdf",
+            "C:/Users/me/AppData/Local/Microsoft/Windows/INetCache/Content.Outlook/AB12CD34/Quote.pdf",
+        ] {
+            assert!(is_mail_temp_copy(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn apple_mail_attachment_copies_are_recognised() {
+        for p in [
+            "/Users/me/Library/Containers/com.apple.mail/Data/Library/Mail Downloads/6F1C2A9E-3B4D-4E5F-8A7B-9C0D1E2F3A4B/booking.pdf",
+            "/Users/me/library/containers/COM.APPLE.MAIL/data/library/mail downloads/6F1C2A9E/Booking (2).pdf",
+        ] {
+            assert!(is_mail_temp_copy(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn ordinary_paths_are_not_mail_copies() {
+        for p in [
+            r"C:\Users\me\Documents\Quote.pdf",
+            r"C:\Users\me\OneDrive - Contoso\Content.Outlook notes\Quote.pdf",
+            r"C:\Users\me\AppData\Local\Microsoft\Windows\INetCache\IE\Quote.pdf",
+            "/home/microsoft.outlookforwindows/report.pdf",
+            "/x/inetcache/content.outlook/y.pdf",
+            "/x/temporary internet files/content.outlook/y.pdf",
+            "/home/me/Documents/Quote.pdf",
+            "/Users/me/Downloads/Mail Downloads/booking.pdf",
+            "/Users/me/Library/Containers/com.apple.Notes/Data/Library/Mail Downloads/booking.pdf",
+            "Quote.pdf",
+        ] {
+            assert!(!is_mail_temp_copy(p), "{p}");
+        }
+    }
+
+    /// A one-page document with a proper xref table.
+    fn one_page_pdf() -> Vec<u8> {
+        let objs = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 300] >>",
+            "<< /Type /Page /Parent 2 0 R >>",
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, o) in objs.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+        for o in offsets {
+            out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+        out
+    }
+
+    #[test]
+    fn save_commits_the_open_text_box() {
+        let dir = staging_dir("open-text-box");
+        let dest = dir.join("out.pdf");
+        let mut app = crate::PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("a.pdf", None, one_page_pdf()).unwrap();
+        app.save_override = Some(dest.to_string_lossy().into_owned());
+        let style = crate::content_ui::default_style();
+        app.views[0].content.draft = Some(crate::content_ui::TextDraft {
+            page: 0,
+            index: None,
+            rect: [20.0, 20.0, 120.0, 40.0],
+            text: "Typed text".into(),
+            style,
+            focus: true,
+        });
+
+        assert!(app.save_active(SaveTarget::InPlace));
+        let id = app.views[0].id;
+        let added = app.session.get(id).unwrap().added();
+        assert_eq!(added.len(), 1, "the open text box was committed before the save");
+        assert!(app.views[0].content.draft.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_asks_where_to_keep_an_email_attachment_and_leaves_the_temporary_copy_alone() {
+        let dir = staging_dir("mail-temp");
+        let cache = dir.join("INetCache").join("Content.Outlook").join("AB12CD34");
+        std::fs::create_dir_all(&cache).unwrap();
+        let attachment = cache.join("Quote.pdf");
+        let original = one_page_pdf();
+        std::fs::write(&attachment, &original).unwrap();
+        let kept = dir.join("Quote.pdf");
+
+        let mut app = crate::PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("Quote.pdf", Some(attachment.to_string_lossy().into_owned()), original.clone()).unwrap();
+        assert!(app.apply_edit(pdfcraft_engine::Edit::RotatePages { pages: vec![0], degrees: 90 }));
+        app.pick_override = Some(vec![kept.to_string_lossy().into_owned()]);
+
+        assert!(!app.save_active(SaveTarget::InPlace), "Save asks instead of writing the temporary copy");
+        app.process_picked();
+        assert_eq!(std::fs::read(&attachment).unwrap(), original, "the attachment's copy is untouched");
+        assert!(std::fs::read(&kept).unwrap().starts_with(b"%PDF"), "the document went where the user chose");
+
+        // The chosen file is the document's file now: the next Save writes it without asking.
+        app.pick_override = None;
+        assert!(app.apply_edit(pdfcraft_engine::Edit::RotatePages { pages: vec![0], degrees: 90 }));
+        assert!(app.save_active(SaveTarget::InPlace));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -908,8 +1612,11 @@ mod revert_draft_tests {
             picked: Vec::new(),
             request_focus: false,
             select_all: false,
+            press: None,
             calendar: None,
             calendar_rect: None,
+            calendar_text: None,
+            had_focus: false,
         }
     }
 
@@ -924,6 +1631,125 @@ mod revert_draft_tests {
         let form = app.session.get(app.views[index].id).unwrap().form.clone();
         crate::forms_ui::commit(&mut app.views[index], &form);
         assert!(app.views[index].forms.committed.is_some() && app.views[index].pending_edit.is_some());
+    }
+
+    #[test]
+    fn control_quit_prompts_for_uncommitted_typing_and_cancel_retains_it() {
+        for queued in [false, true] {
+            let mut app = app();
+            let id = app.views[0].id;
+            app.open_bytes("other.pdf", None, include_bytes!("../tests/data/form.pdf").to_vec()).unwrap();
+            if queued {
+                queue_draft(&mut app, 0, "Unsaved typing");
+            } else {
+                app.views[0].forms.focus = Some(focus("Unsaved typing"));
+            }
+            assert!(!app.session.get(id).unwrap().dirty);
+            assert_eq!(app.active, Some(1));
+            let ctx = egui::Context::default();
+            assert!(!app.request_quit(&ctx));
+            assert_eq!(app.close_request, Some(CloseRequest::Quit));
+            assert!(!app.allow_quit);
+            app.resolve_close(&ctx, None);
+            assert!(app.close_request.is_none());
+            assert_eq!(app.views.len(), 2);
+            assert!(app.has_unsaved_work(0));
+            assert_eq!(app.views[0].id, id);
+            assert!(!app.session.get(id).unwrap().dirty);
+            if queued {
+                assert!(
+                    matches!(&app.views[0].pending_edit, Some(Edit::SetFieldValue { value: FieldValue::Text(text), .. }) if text == "Unsaved typing")
+                );
+            } else {
+                assert_eq!(app.views[0].forms.focus.as_ref().unwrap().text, "Unsaved typing");
+            }
+        }
+    }
+
+    /// A value the field's font can't draw is kept, and the user is told why it shows `?`, in the
+    /// interface language; a drawable value says nothing.
+    #[test]
+    fn a_value_its_font_cannot_draw_is_kept_and_explained() {
+        let mut app = app();
+        let fill =
+            |app: &mut PdfCraftApp, text: &str| app.apply_edit(Edit::SetFieldValue { name: "name".into(), value: FieldValue::Text(text.into()) });
+        assert!(fill(&mut app, "张三"));
+        let toast = app.toast.as_ref().map(|t| t.0.clone()).expect("a notice");
+        assert!(toast.contains("“张” (U+5F20)") && toast.contains("other PDF viewers redraw the field"), "{toast}");
+        assert_eq!(app.session.get(app.views[0].id).unwrap().form.iter().find(|f| f.name == "name").unwrap().value, ["张三"]);
+        // The shell sets the drawing language each frame; here, directly (per thread).
+        let previous = crate::i18n::current();
+        crate::i18n::set_current(crate::i18n::Lang::from_code("zh-hans").expect("registered"));
+        assert!(fill(&mut app, "李四"));
+        crate::i18n::set_current(previous);
+        let toast = app.toast.as_ref().map(|t| t.0.clone()).expect("a notice");
+        assert!(toast.contains("此字段的字体无法显示“李”（U+674E）"), "{toast}");
+        app.toast = None;
+        assert!(fill(&mut app, "Ada"));
+        assert!(app.toast.is_none(), "{:?}", app.toast);
+    }
+
+    #[test]
+    fn unsaved_flag_follows_dirty_state() {
+        use std::sync::atomic::Ordering;
+        // `guard_quit` runs every frame, also on the web, where no close request ever arrives.
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.guard_quit(&ctx);
+        assert!(!app.unsaved_flag.load(Ordering::Relaxed));
+        assert!(app.apply_edit(Edit::SetFieldValue { name: "name".into(), value: FieldValue::Text("Changed".into()) }));
+        app.guard_quit(&ctx);
+        assert!(app.unsaved_flag.load(Ordering::Relaxed));
+    }
+
+    /// Text typed into a new text box is lost on close unless the save prompt appears; an empty
+    /// box has nothing to lose.
+    #[test]
+    fn text_typed_into_a_new_text_box_counts_as_unsaved_work() {
+        use crate::content_ui::{TextDraft, default_style};
+        let mut app = app();
+        let draft = |text: &str| TextDraft { page: 0, index: None, rect: [0.0; 4], text: text.into(), style: default_style(), focus: true };
+        assert!(!app.has_unsaved_work(0));
+        app.views[0].content.draft = Some(draft("  \n"));
+        assert!(!app.has_unsaved_work(0));
+        app.views[0].content.draft = Some(draft("Typed"));
+        assert!(!app.session.get(app.views[0].id).unwrap().dirty);
+        assert!(app.has_unsaved_work(0));
+    }
+
+    /// Close ▸ Save, and Quit ▸ Save, write the text typed into a new text box before the tab
+    /// closes.
+    #[test]
+    fn saving_on_close_keeps_text_typed_into_a_new_text_box() {
+        use crate::content_ui::{TextDraft, default_style};
+        use pdfcraft_engine::AddedContent;
+        for quit in [false, true] {
+            let dir = std::env::temp_dir().join(format!("pdfcraft-ui-new-text-{}-{quit}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("source.pdf").to_string_lossy().into_owned();
+            let bytes = include_bytes!("../tests/data/form.pdf").to_vec();
+            std::fs::write(&path, &bytes).unwrap();
+            let mut app = PdfCraftApp::new();
+            app.open_bytes("source.pdf", Some(path.clone()), bytes).unwrap();
+            let rect = [72.0, 72.0, 272.0, 92.0];
+            app.views[0].content.draft = Some(TextDraft { page: 0, index: None, rect, text: "Typed".into(), style: default_style(), focus: true });
+            let ctx = egui::Context::default();
+            if quit {
+                assert!(!app.request_quit(&ctx));
+            } else {
+                app.request_close_tab(0);
+            }
+            assert!(app.close_request.is_some());
+            app.resolve_close(&ctx, Some(true));
+            assert!(app.views.is_empty(), "the tab closes once saved");
+
+            let mut reopened = PdfCraftApp::new();
+            reopened.open_bytes("source.pdf", Some(path.clone()), std::fs::read(&path).unwrap()).unwrap();
+            let doc = reopened.session.get(reopened.views[0].id).unwrap();
+            assert!(doc.added().iter().any(|a| matches!(&a.content, AddedContent::Text(t) if t.text == "Typed")), "quit: {quit}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]
@@ -983,5 +1809,63 @@ mod revert_draft_tests {
         );
         assert_eq!(app.active_ids(), Some((0, source)));
         assert_eq!(app.toast.as_ref().unwrap().0, pdfcraft_engine::EditError::NoDocument.to_string());
+    }
+}
+
+#[cfg(test)]
+mod content_page_tests {
+    use super::content_page;
+    use pdfcraft_engine::{Edit, ObjectKind, ObjectTarget};
+
+    /// Single-page content edits keep every other page's rasters; anything else still
+    /// invalidates the whole document.
+    #[test]
+    fn single_page_content_edits_map_to_their_page() {
+        let moved = Edit::MoveObjects { page: 3, objects: vec![ObjectTarget { kind: ObjectKind::Text, index: 0 }], offset: [1.0, 0.0] };
+        assert_eq!(content_page(&moved), Some(3));
+        assert_eq!(content_page(&Edit::RotatePages { pages: vec![0], degrees: 90 }), None);
+        assert_eq!(content_page(&Edit::SetInfo { key: "Title".into(), value: "x".into() }), None);
+    }
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::CloseRequest;
+    use crate::PdfCraftApp;
+
+    /// The attention requests one frame of `attend_save_prompt` sends, with the window `focused`
+    /// or not.
+    fn attend(app: &mut PdfCraftApp, ctx: &egui::Context, focused: bool) -> Vec<egui::UserAttentionType> {
+        let mut out = ctx.run_ui(egui::RawInput { focused, ..Default::default() }, |ui| app.attend_save_prompt(ui.ctx()));
+        // The frame's font texture isn't uploaded anywhere in a unit test.
+        out.textures_delta.clear();
+        out.viewport_output
+            .values()
+            .flat_map(|v| v.commands.iter())
+            .filter_map(|c| if let egui::ViewportCommand::RequestUserAttention(a) = c { Some(*a) } else { None })
+            .collect()
+    }
+
+    /// A save that finishes after a newer "save changes?" question opened in front, and after the
+    /// user went to another app, asks for no attention: the user saw that question.
+    #[test]
+    fn a_save_finishing_behind_a_newer_question_the_user_saw_asks_for_nothing() {
+        let ctx = egui::Context::default();
+        let mut app = PdfCraftApp::new();
+        for name in ["a.pdf", "b.pdf", "c.pdf"] {
+            let bytes = app.session.create_blank(200.0, 300.0, 1).unwrap();
+            app.open_bytes(name, None, bytes.as_ref().clone()).unwrap();
+            app.active = Some(app.views.len() - 1);
+            assert!(app.apply_edit(pdfcraft_engine::Edit::RotatePages { pages: vec![0], degrees: 90 }));
+        }
+        // a.pdf was answered with Save while quitting. While that save is pending, the user closes
+        // c.pdf's tab, and its question opens in front.
+        let c = app.views[2].id;
+        app.close_request = Some(CloseRequest::Tab(c));
+        assert!(attend(&mut app, &ctx, true).is_empty());
+        // a.pdf's save finishes once the user has gone to another app.
+        app.close_and_continue(&ctx, 0, CloseRequest::Quit);
+        assert_eq!(app.close_request, Some(CloseRequest::Tab(c)), "the newer question stands");
+        assert!(attend(&mut app, &ctx, false).is_empty(), "the user has seen it");
     }
 }

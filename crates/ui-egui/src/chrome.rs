@@ -701,12 +701,15 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let view = &mut app.views[index];
     let mut page_display = None;
     let mobile = theme::is_mobile();
+    // Material's touch target, and a little air around it in the rail.
+    let icon = if mobile { 44.0 } else { 32.0 };
+    let small = if mobile { 40.0 } else { 30.0 };
     let mut rail = Rail::new(egui::Id::unique("rail"))
         .edge(Edge::End)
         .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 8)).stroke(Stroke::new(1.0, t.divider)));
     if mobile {
         // Fingers need a wider strip and bigger targets than a mouse.
-        rail = rail.width(62.0).button_size(42.0);
+        rail = rail.width(72.0).button_size(48.0);
     }
     let rail = rail
         .show(ui, &items, app.right.as_ref(), |ui| {
@@ -723,16 +726,16 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let tip = crate::commands::key_tip(ui.ctx(), tl!("Zoom out ({key})"), crate::commands::ZOOM_OUT);
-                if icons::button(ui, "zoom-out", 32.0, false, &tip).clicked() {
+                if icons::button(ui, "zoom-out", icon, false, &tip).clicked() {
                     view.zoom_step(false);
                 }
                 let tip = crate::commands::key_tip(ui.ctx(), tl!("Zoom in ({key})"), crate::commands::ZOOM_IN);
-                if icons::button(ui, "zoom-in", 32.0, false, &tip).clicked() {
+                if icons::button(ui, "zoom-in", icon, false, &tip).clicked() {
                     view.zoom_step(true);
                 }
                 // Between rotate and zoom, as in Acrobat. Its command runs once `view` is free.
                 let tip = crate::i18n::fmt(tl!("Page display: {layout}"), &[("layout", tl!(view.layout.label()))]);
-                let resp = icons::button(ui, view.layout.icon(), 32.0, false, &tip);
+                let resp = icons::button(ui, view.layout.icon(), icon, false, &tip);
                 page_display = egui::Popup::menu(&resp)
                     .show(|ui| {
                         ui.set_min_width(220.0);
@@ -740,12 +743,12 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     })
                     .and_then(|r| r.inner);
                 let tip = crate::commands::key_tip(ui.ctx(), tl!("Rotate view clockwise ({key})"), crate::commands::ROTATE_CW);
-                if icons::button(ui, "rotate-cw", 32.0, false, &tip).clicked() {
+                if icons::button(ui, "rotate-cw", icon, false, &tip).clicked() {
                     view.rotate_view(true);
                 }
                 // Not `columns-2` while fitting the page: that is the two-page view's icon.
                 let fit_icon = if view.fit == Fit::Width { "maximize" } else { "maximize-2" };
-                if icons::button(ui, fit_icon, 32.0, false, tl!("Toggle fit page / fit width")).clicked() {
+                if icons::button(ui, fit_icon, icon, false, tl!("Toggle fit page / fit width")).clicked() {
                     view.fit = if view.fit == Fit::Width { Fit::Page } else { Fit::Width };
                     view.goto = Some((view.current, 0.0));
                 }
@@ -780,10 +783,10 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     }
                 }
                 ui.add_space(6.0);
-                if icons::button(ui, "chevron-down", 30.0, false, tl!("Next page")).clicked() {
+                if icons::button(ui, "chevron-down", small, false, tl!("Next page")).clicked() {
                     view.step_page(true);
                 }
-                if icons::button(ui, "chevron-up", 30.0, false, tl!("Previous page")).clicked() {
+                if icons::button(ui, "chevron-up", small, false, tl!("Previous page")).clicked() {
                     view.step_page(false);
                 }
                 // History is distinct from stepping to the adjacent page, and belongs to this tab.
@@ -792,7 +795,7 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     (false, "chevron-left", tl!("Previous view"), crate::commands::PREV_VIEW, !view.back.is_empty()),
                 ] {
                     let tip = format!("{label} ({})", crate::commands::shortcut_label(ui.ctx(), shortcut));
-                    if ui.add_enabled_ui(enabled, |ui| icons::button(ui, icon, 30.0, false, &tip)).inner.clicked() {
+                    if ui.add_enabled_ui(enabled, |ui| icons::button(ui, icon, small, false, &tip)).inner.clicked() {
                         view.view_history(forward);
                     }
                 }

@@ -700,12 +700,26 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     items.push(item(RightPanel::Tags, "tag", "Tags", None));
     let view = &mut app.views[index];
     let mut page_display = None;
-    let rail = Rail::new(egui::Id::unique("rail"))
+    let mobile = theme::is_mobile();
+    let mut rail = Rail::new(egui::Id::unique("rail"))
         .edge(Edge::End)
-        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 8)).stroke(Stroke::new(1.0, t.divider)))
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 8)).stroke(Stroke::new(1.0, t.divider)));
+    if mobile {
+        // Fingers need a wider strip and bigger targets than a mouse.
+        rail = rail.width(62.0).button_size(42.0);
+    }
+    let rail = rail
         .show(ui, &items, app.right.as_ref(), |ui| {
             // Page navigation cluster at the bottom, a panel of its own so that in a short
             // window the buttons above scroll instead of running into it (#3282).
+            // On a landscape phone the cluster itself is taller than the window, so it scrolls.
+            egui::ScrollArea::vertical()
+                .id_salt("rail_foot_scroll")
+                .max_height((ui.ctx().content_rect().height() * 0.55).max(150.0))
+                .auto_shrink([false, true])
+                .stick_to_bottom(true)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+                .show(ui, |ui| {
             ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let tip = crate::commands::key_tip(ui.ctx(), tl!("Zoom out ({key})"), crate::commands::ZOOM_OUT);
@@ -827,6 +841,7 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     view.page_input = view.current_page_label(labels.get(view.current).map(String::as_str));
                 }
             });
+                });
         });
     match rail.request {
         Some(RailRequest::Open(panel)) => app.choose_right_panel(Some(panel)),

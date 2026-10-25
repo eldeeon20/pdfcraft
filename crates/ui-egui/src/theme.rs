@@ -431,6 +431,11 @@ pub fn set_mobile(on: bool) {
     MOBILE.store(on, Ordering::Relaxed);
 }
 
+/// Whether the mobile shell is running (Android): larger touch chrome.
+pub fn is_mobile() -> bool {
+    MOBILE.load(Ordering::Relaxed)
+}
+
 /// Install the palette, widget styling, text sizes and right-to-left flag for the chosen theme.
 pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     // Keep the native window inherited. A concrete egui theme pins macOS's

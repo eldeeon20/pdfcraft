@@ -1897,6 +1897,15 @@ impl PdfCraftApp {
     /// Android viewer mode: the page scrolls with a touch drag and the editing tools are hidden.
     pub fn set_viewer_mode(&mut self, on: bool) {
         self.viewer_mode = on;
+        if on {
+            // Reading follows the whole document, not one page at a time: the phone's
+            // viewer scrolls through every page continuously.
+            for view in &mut self.views {
+                view.layout = canvas::PageLayout::Single;
+                view.continuous = true;
+                view.goto = Some((view.current, 0.0));
+            }
+        }
     }
 
     /// Whether a document is open (the mobile shell shows its full-screen controls only then).

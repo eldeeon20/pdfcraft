@@ -94,15 +94,22 @@ impl eframe::App for MobileShell {
         // Until the user picks a mode, portrait is Full and landscape is Window. Using the
         // viewport's aspect ratio means split-screen/freeform windows do the sensible thing
         // too. Once Full/Window is pressed, that mode locks the orientation and this stops.
-        // Without a document there is nothing to read full-screen, so leave the action bar
-        // visible on the home screen.
+        // Opening a document in portrait must enter the viewer even when the device did not
+        // rotate; without a document there is nothing to read full-screen, so leave the
+        // action bar visible on the home screen.
+        let has_document = self.app.has_document();
         if !state.locked {
             let portrait = ctx.content_rect().width() <= ctx.content_rect().height();
-            if state.portrait != Some(portrait) {
+            let opened = state.document_open != has_document;
+            let rotated = state.portrait != Some(portrait);
+            if opened || rotated {
+                state.document_open = has_document;
                 state.portrait = Some(portrait);
-                let full = portrait && self.app.has_document();
+                let full = portrait && has_document;
                 mobile::set_full_screen(&mut self.app, &ctx, &mut state, full, false);
             }
+        } else {
+            state.document_open = has_document;
         }
 
         // 1. Mobile action bar (hidden during full-screen reading).

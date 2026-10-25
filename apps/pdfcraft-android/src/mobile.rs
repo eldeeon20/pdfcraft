@@ -23,6 +23,9 @@ pub struct MobileState {
     pub(crate) portrait: Option<bool>,
     /// Set by the Full/Window buttons: from then on the chosen mode owns the orientation.
     pub(crate) locked: bool,
+    /// Whether a document was open last frame, so opening one in portrait enters the
+    /// viewer even when the device did not rotate.
+    pub(crate) document_open: bool,
     picker: Option<Picker>,
 }
 

@@ -32,7 +32,14 @@ class PdfCraftActivity : NativeActivity() {
         super.onCreate(savedInstanceState)
         KotlinBridge.activity = this
         applyOrientationMode()
+        if (handleViewIntent(intent)) return
         askForStorage()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleViewIntent(intent)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -156,17 +163,32 @@ class PdfCraftActivity : NativeActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_PICK && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
-            val dir = File(filesDir, "PdfCraft").apply { mkdirs() }
-            val copy = File(dir, "saf-open.pdf")
-            try {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    copy.outputStream().use { output -> input.copyTo(output) }
-                } ?: throw IllegalStateException("empty stream")
-                File(dir, "pending_open.txt").writeText(copy.absolutePath)
-                recreate()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Could not open the PDF: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+            openUri(uri)
+        }
+    }
+
+    /// A tapped PDF (ACTION_VIEW) or the system picker both hand us a URI: copy it into the
+    /// sandbox and restart so Rust opens it through `PdfCraft/pending_open.txt`.
+    private fun handleViewIntent(intent: Intent?): Boolean {
+        if (intent?.action != Intent.ACTION_VIEW) return false
+        val uri = intent.data ?: return false
+        openUri(uri)
+        return true
+    }
+
+    private fun openUri(uri: Uri) {
+        val dir = File(filesDir, "PdfCraft").apply { mkdirs() }
+        val copy = File(dir, "saf-open.pdf")
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                copy.outputStream().use { output -> input.copyTo(output) }
+            } ?: throw IllegalStateException("empty stream")
+            File(dir, "pending_open.txt").writeText(copy.absolutePath)
+            // Drop the VIEW data before restarting, or onCreate would handle it again.
+            setIntent(Intent(this, PdfCraftActivity::class.java))
+            recreate()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Could not open the PDF: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 

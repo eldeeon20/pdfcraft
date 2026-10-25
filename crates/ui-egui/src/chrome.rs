@@ -503,11 +503,24 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 ui.add_space(10.0);
                 // Acrobat's mode bar has no Read tab: reading is what the viewer does with no tool
                 // in use. Read mode (the panes hidden) stays a View command and a default workspace.
-                for (mode, label) in [(Mode::AllTools, "All tools"), (Mode::Edit, "Edit"), (Mode::Convert, "Convert"), (Mode::Sign, "E-Sign")] {
-                    if widgets::mode_tab(ui, tl!(label), app.mode == mode).clicked() {
-                        app.switch_mode(mode, true);
-                    }
-                }
+                // On a phone the tabs scroll instead of pushing the menu and Find off screen.
+                egui::ScrollArea::horizontal()
+                    .id_salt("mode_tabs")
+                    .auto_shrink([true; 2])
+                    .max_width((ui.available_width() * 0.55).max(120.0))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        for (mode, label) in [
+                            (Mode::AllTools, "All tools"),
+                            (Mode::Edit, "Edit"),
+                            (Mode::Convert, "Convert"),
+                            (Mode::Sign, "E-Sign"),
+                        ] {
+                            if widgets::mode_tab(ui, tl!(label), app.mode == mode).clicked() {
+                                app.switch_mode(mode, true);
+                            }
+                        }
+                    });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let has_doc = app.active.is_some();
@@ -532,8 +545,11 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         }
                     });
                     ui.add_space(8.0);
-                    if widgets::search_box(ui, tl!("Find tools and commands"), 260.0).clicked() {
-                        app.palette_open = true;
+                    if ui.available_width() >= 200.0 {
+                        let width = (260.0_f32).min(ui.available_width() * 0.75);
+                        if widgets::search_box(ui, tl!("Find tools and commands"), width).clicked() {
+                            app.palette_open = true;
+                        }
                     }
                 });
             });
@@ -552,6 +568,13 @@ fn main_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     egui::Popup::menu(&resp).show(|ui| {
         scroll_menu(ui, |ui| {
             ui.set_min_width(230.0);
+            let key = crate::commands::command_shortcut_label(ui.ctx(), "view.palette");
+            if widgets::menu_item(ui, tl!("Find tools and commands"), &key).clicked() {
+                ui.close();
+                app.execute("view.palette");
+                return;
+            }
+            ui.separator();
             ui.menu_button(tl!("File"), |ui| scroll_menu(ui, |ui| crate::commands::registry_menu(app, ui, "File")));
             ui.menu_button(tl!("Edit"), |ui| scroll_menu(ui, |ui| crate::commands::registry_menu(app, ui, "Edit")));
             ui.menu_button(tl!("Pages"), |ui| scroll_menu(ui, |ui| crate::commands::registry_menu(app, ui, "Pages")));

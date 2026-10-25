@@ -24,6 +24,7 @@ log = { workspace = true }
 [target.'cfg(target_os = "android")'.dependencies]
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
 android-activity = { version = "0.6", features = ["native-activity"] }
+jni = "0.22"
 
 [package.metadata.android]
 package = "ai.storyteller.pdfcraft"

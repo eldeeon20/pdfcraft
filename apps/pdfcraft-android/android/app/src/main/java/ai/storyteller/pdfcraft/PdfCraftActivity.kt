@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.app.NativeActivity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,6 +14,7 @@ import android.provider.Settings
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.WindowManager
 import android.widget.Toast
 import java.io.File
 
@@ -28,17 +30,31 @@ class PdfCraftActivity : NativeActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        KotlinBridge.activity = this
+        applyOrientationMode()
         askForStorage()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyOrientationMode()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) hideSystemBars()
+        if (hasFocus) applyOrientationMode()
     }
 
-    /// Immersive mode: the page owns the screen; a swipe from the edge brings the bars back.
-    private fun hideSystemBars() {
+    /// Portrait: the page owns the screen (immersive). Landscape: a normal window with
+    /// the system bars visible, so the OS can resize or split the app.
+    private fun applyOrientationMode() {
+        val portrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        if (portrait) enterImmersive() else leaveImmersive()
+    }
+
+    private fun enterImmersive() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
             window.insetsController?.let {
                 it.hide(WindowInsets.Type.systemBars())
                 it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -56,12 +72,33 @@ class PdfCraftActivity : NativeActivity() {
         }
     }
 
+    private fun leaveImmersive() {
+        // The theme starts fullscreen; clear that flag before asking the bars to show.
+        @Suppress("DEPRECATION")
+        window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(true)
+            window.insetsController?.let {
+                it.show(WindowInsets.Type.systemBars())
+                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_DEFAULT
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        }
+    }
+
     override fun onResume() {
         super.onResume()
-        hideSystemBars()
+        applyOrientationMode()
         // Coming back from Settings (or from a pick) without the grant: ask again instead of
         // leaving the user with a picker that can't list Download.
         askForStorage()
+    }
+
+    override fun onDestroy() {
+        if (KotlinBridge.activity === this) KotlinBridge.activity = null
+        super.onDestroy()
     }
 
     private fun hasStorage(): Boolean =

@@ -18,6 +18,11 @@ use pdfcraft_ui_egui::rfd::{PendingKind, PendingPick, take_pending};
 #[derive(Default)]
 pub struct MobileState {
     pub full_screen: bool,
+    /// Last orientation seen (true = portrait). `None` until the first frame, so the
+    /// automatic Full/Window switch runs once on startup and again on every rotation.
+    pub(crate) portrait: Option<bool>,
+    /// Set by the Full/Window buttons: from then on the chosen mode owns the orientation.
+    pub(crate) locked: bool,
     picker: Option<Picker>,
 }
 
@@ -52,7 +57,7 @@ pub fn render_action_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui, state: &mut M
                 bar_button(ui, &t, "📂 Open", || app.open_dialog());
                 bar_button(ui, &t, "💾 Save", || save_active(app));
                 bar_button(ui, &t, "☰ Panel", || app.left_open = !app.left_open);
-                bar_button(ui, &t, "⛶ Full", || set_full_screen(app, &ctx, state, true));
+                bar_button(ui, &t, "⛶ Full", || set_full_screen(app, &ctx, state, true, true));
             });
         });
 }
@@ -72,9 +77,23 @@ fn bar_button(ui: &mut egui::Ui, t: &Tokens, label: &str, action: impl FnOnce())
 }
 
 /// Enter or leave full-screen reading (Acrobat: View ▸ Full Screen Mode).
-pub fn set_full_screen(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState, on: bool) {
+///
+/// `lock_orientation` is true for the buttons: viewer locks portrait, window locks
+/// landscape, so the editor controls always have room. The automatic orientation on
+/// startup/rotation passes false and leaves the device free.
+pub fn set_full_screen(
+    app: &mut PdfCraftApp,
+    ctx: &egui::Context,
+    state: &mut MobileState,
+    on: bool,
+    lock_orientation: bool,
+) {
     state.full_screen = on;
     app.set_full_screen(ctx, on);
+    if lock_orientation {
+        state.locked = true;
+        crate::orientation::set_viewer_mode(on);
+    }
 }
 
 /// A way out of full-screen reading (the action bar is hidden there).
@@ -84,7 +103,7 @@ pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state:
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             if ui.add(egui::Button::new("⤢ Window").min_size(vec2(0.0, 36.0))).clicked() {
-                set_full_screen(app, ctx, state, false);
+                set_full_screen(app, ctx, state, false, true);
             }
         });
 }

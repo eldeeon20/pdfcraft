@@ -21,8 +21,6 @@ pub struct MobileState {
     /// Last orientation seen (true = portrait). `None` until the first frame, so the
     /// automatic Full/Window switch runs once on startup and again on every rotation.
     pub(crate) portrait: Option<bool>,
-    /// Set by the Full/Window buttons: from then on the chosen mode owns the orientation.
-    pub(crate) locked: bool,
     /// Whether a document was open last frame, so opening one in portrait enters the
     /// viewer even when the device did not rotate.
     pub(crate) document_open: bool,
@@ -60,7 +58,7 @@ pub fn render_action_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui, state: &mut M
                 bar_button(ui, &t, "📂 Open", || app.open_dialog());
                 bar_button(ui, &t, "💾 Save", || save_active(app));
                 bar_button(ui, &t, "☰ Panel", || app.left_open = !app.left_open);
-                bar_button(ui, &t, "⛶ Full", || set_full_screen(app, &ctx, state, true, true));
+                bar_button(ui, &t, "⛶ Full", || set_full_screen(app, &ctx, state, true));
             });
         });
 }
@@ -81,28 +79,18 @@ fn bar_button(ui: &mut egui::Ui, t: &Tokens, label: &str, action: impl FnOnce())
 
 /// Enter or leave full-screen reading (Acrobat: View ▸ Full Screen Mode).
 ///
-/// `lock_orientation` is true for the buttons: viewer locks portrait, window locks
-/// landscape, so the editor controls always have room. The automatic orientation on
-/// startup/rotation passes false and leaves the device free.
-pub fn set_full_screen(
-    app: &mut PdfCraftApp,
-    ctx: &egui::Context,
-    state: &mut MobileState,
-    on: bool,
-    lock_orientation: bool,
-) {
+/// Rotation always owns the mode: portrait is the viewer and landscape is the editor.
+/// The buttons only switch mode until the next rotation, so they never trap the device
+/// in one orientation.
+pub fn set_full_screen(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState, on: bool) {
     // Full-screen reading is meaningless on the home screen: it would hide the action
-    // bar and lock the orientation with nothing to read.
+    // bar with nothing to read.
     if on && !app.has_document() {
         return;
     }
     state.full_screen = on;
     app.set_full_screen(ctx, on);
     app.set_viewer_mode(on);
-    if lock_orientation {
-        state.locked = true;
-        crate::orientation::set_viewer_mode(on);
-    }
 }
 
 /// The way out of full-screen reading: back to the home screen, with automatic
@@ -137,7 +125,6 @@ pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state:
 fn leave_viewer_to_home(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState) {
     let portrait = ctx.content_rect().width() <= ctx.content_rect().height();
     state.full_screen = false;
-    state.locked = false;
     state.portrait = Some(portrait);
     app.set_full_screen(ctx, false);
     app.set_viewer_mode(false);

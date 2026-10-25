@@ -10,9 +10,6 @@ use crate::mobile;
 pub fn start(android_app: android_activity::AndroidApp) {
     let internal_path = android_app.internal_data_path().map(PathBuf::from);
 
-    // The Full/Window buttons post the orientation lock through this handle.
-    crate::orientation::install(android_app.clone());
-
     let mut options = eframe::NativeOptions::default();
     options.android_app = Some(android_app);
     // Settings and crash recovery stay in the app sandbox (`main.rs` keeps them in the user's
@@ -91,25 +88,20 @@ impl eframe::App for MobileShell {
         let ctx = ui.ctx().clone();
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Until the user picks a mode, portrait is Full and landscape is Window. Using the
-        // viewport's aspect ratio means split-screen/freeform windows do the sensible thing
-        // too. Once Full/Window is pressed, that mode locks the orientation and this stops.
-        // Opening a document in portrait must enter the viewer even when the device did not
-        // rotate; without a document there is nothing to read full-screen, so leave the
-        // action bar visible on the home screen.
+        // Portrait is Full and landscape is Window, always. Using the viewport's aspect
+        // ratio means split-screen/freeform windows do the sensible thing too. Opening a
+        // document in portrait must enter the viewer even when the device did not rotate;
+        // without a document there is nothing to read full-screen, so leave the action bar
+        // visible on the home screen.
         let has_document = self.app.has_document();
-        if !state.locked {
-            let portrait = ctx.content_rect().width() <= ctx.content_rect().height();
-            let opened = state.document_open != has_document;
-            let rotated = state.portrait != Some(portrait);
-            if opened || rotated {
-                state.document_open = has_document;
-                state.portrait = Some(portrait);
-                let full = portrait && has_document;
-                mobile::set_full_screen(&mut self.app, &ctx, &mut state, full, false);
-            }
-        } else {
+        let portrait = ctx.content_rect().width() <= ctx.content_rect().height();
+        let opened = state.document_open != has_document;
+        let rotated = state.portrait != Some(portrait);
+        if opened || rotated {
             state.document_open = has_document;
+            state.portrait = Some(portrait);
+            let full = portrait && has_document;
+            mobile::set_full_screen(&mut self.app, &ctx, &mut state, full);
         }
 
         // 1. Mobile action bar (hidden during full-screen reading).

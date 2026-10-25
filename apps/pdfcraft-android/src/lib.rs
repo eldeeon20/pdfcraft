@@ -12,8 +12,6 @@
 mod android_app;
 #[cfg(target_os = "android")]
 mod mobile;
-#[cfg(target_os = "android")]
-mod orientation;
 
 #[cfg(target_os = "android")]
 // SAFETY: Required by android-activity to export the C entry point for Android NativeActivity.

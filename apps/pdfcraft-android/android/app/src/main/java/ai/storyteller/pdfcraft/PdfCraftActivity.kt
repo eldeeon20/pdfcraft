@@ -102,7 +102,7 @@ class PdfCraftActivity : NativeActivity() {
         AlertDialog.Builder(this)
             .setTitle("Storage access")
             .setMessage(
-                "PdfCraft needs access to your files to open PDFs.\n\n" +
+                "ClawPDF needs access to your files to open PDFs.\n\n" +
                     "You can also pick a single document with the system picker; that only " +
                     "touches the file you choose."
             )

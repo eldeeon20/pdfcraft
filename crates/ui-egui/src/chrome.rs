@@ -662,7 +662,136 @@ fn main_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
 
 /// Draw the right tool rail with page navigation, history, zoom, rotation and page-display controls for the
 /// active view.
+/// The phone rail: one scroll for the tool icons and the page/zoom controls, so a short
+/// landscape window never splits them into two scroll areas. Icon sizes match the original
+/// Android port (34 pt tools, 32/30 pt page controls).
+fn mobile_right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    let Some((index, id)) = app.active_ids() else { return };
+    let Some(doc) = app.session.get(id) else { return };
+    let has_signatures = doc.is_signed();
+    let has_check = app.a11y.report.as_ref().is_some_and(|(d, _)| *d == id);
+    let (has_comments, has_outline, has_fields, has_layers, has_files) = (
+        !doc.info.annotations.is_empty(),
+        !doc.info.outline.is_empty(),
+        !doc.info.fields.is_empty(),
+        !doc.info.layers.is_empty(),
+        !doc.info.attachments.is_empty(),
+    );
+    let page_count = doc.info.pages.len();
+    let labels: Vec<String> = doc.info.pages.iter().map(|p| p.label.clone()).collect();
+    egui::Panel::right("rail")
+        .resizable(false)
+        .exact_size(70.0)
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 8)).stroke(Stroke::new(1.0, t.divider)))
+        .show(ui, |ui| {
+            let mut page_display = None;
+            egui::ScrollArea::vertical()
+                .id_salt("rail_scroll")
+                .auto_shrink([false, false])
+                .scroll_source(egui::scroll_area::ScrollSource {
+                    drag: egui::scroll_area::DragScroll::Always,
+                    ..Default::default()
+                })
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                .show(ui, |ui| {
+                    ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        let mut rail_button = |ui: &mut egui::Ui, panel: RightPanel, icon: &str, tip: &str, has: bool| {
+                            let selected = app.right == Some(panel);
+                            let r = icons::button(ui, icon, 34.0, selected, tl!(tip));
+                            if has && !selected {
+                                let c = r.rect.right_top() + vec2(-8.0, 8.0);
+                                ui.painter().circle_filled(c, 3.0, t.accent);
+                            }
+                            if r.clicked() {
+                                app.choose_right_panel(if selected { None } else { Some(panel) });
+                            }
+                        };
+                        rail_button(ui, RightPanel::Comments, "message-square-text", "Comments", has_comments);
+                        rail_button(ui, RightPanel::Bookmarks, "bookmark", "Bookmarks", has_outline);
+                        rail_button(ui, RightPanel::Pages, "files", "Page thumbnails", false);
+                        rail_button(ui, RightPanel::Fields, "text-cursor-input", "Form fields", has_fields);
+                        rail_button(ui, RightPanel::Layers, "layers", "Layers", has_layers);
+                        rail_button(ui, RightPanel::Attachments, "paperclip", "Attachments", has_files);
+                        rail_button(ui, RightPanel::Signatures, "signature", "Signatures", has_signatures);
+                        if has_check {
+                            rail_button(ui, RightPanel::Accessibility, "accessibility", "Accessibility Checker", false);
+                        }
+                        rail_button(ui, RightPanel::Tags, "tag", "Tags", false);
+
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+
+                        // Page navigation cluster, in the same scroll as the tool icons.
+                        let view = &mut app.views[index];
+                        let edit = egui::TextEdit::singleline(&mut view.page_input)
+                            .id(egui::Id::new("page-input"))
+                            .desired_width(34.0)
+                            .horizontal_align(Align::Center)
+                            .font(theme::medium(12.0))
+                            .margin(vec2(2.0, 4.0));
+                        let r = egui::Frame::NONE
+                            .fill(t.field)
+                            .stroke(Stroke::new(1.0, t.border))
+                            .corner_radius(CornerRadius::same(5))
+                            .show(ui, |ui| ui.add(edit))
+                            .inner
+                            .on_hover_text(tl!("Current page — type a page number or label (such as iv) and press Enter"));
+                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            let typed = view.page_input.clone();
+                            if !view.go_to_typed(&typed, &labels) {
+                                view.page_input = (view.current + 1).to_string();
+                            }
+                        }
+                        ui.label(egui::RichText::new(page_count.to_string()).font(theme::regular(11.0)).color(t.text_muted));
+                        if icons::button(ui, "chevron-up", 30.0, false, tl!("Previous page")).clicked() {
+                            view.step_page(false);
+                        }
+                        if icons::button(ui, "chevron-down", 30.0, false, tl!("Next page")).clicked() {
+                            view.step_page(true);
+                        }
+                        ui.label(egui::RichText::new(format!("{:.0}%", view.zoom * 100.0)).font(theme::regular(10.5)).color(t.text_faint));
+                        let fit_icon = if view.fit == Fit::Width { "maximize" } else { "maximize-2" };
+                        if icons::button(ui, fit_icon, 32.0, false, tl!("Toggle fit page / fit width")).clicked() {
+                            view.fit = if view.fit == Fit::Width { Fit::Page } else { Fit::Width };
+                            view.goto = Some((view.current, 0.0));
+                        }
+                        let tip = crate::commands::key_tip(ui.ctx(), tl!("Rotate view clockwise ({key})"), crate::commands::ROTATE_CW);
+                        if icons::button(ui, "rotate-cw", 32.0, false, &tip).clicked() {
+                            view.rotate_view(true);
+                        }
+                        let tip = crate::i18n::fmt(tl!("Page display: {layout}"), &[("layout", tl!(view.layout.label()))]);
+                        let resp = icons::button(ui, view.layout.icon(), 32.0, false, &tip);
+                        page_display = egui::Popup::menu(&resp)
+                            .show(|ui| {
+                                ui.set_min_width(220.0);
+                                rail_view_menu(ui, view)
+                            })
+                            .and_then(|r| r.inner);
+                        let tip = crate::commands::key_tip(ui.ctx(), tl!("Zoom in ({key})"), crate::commands::ZOOM_IN);
+                        if icons::button(ui, "zoom-in", 32.0, false, &tip).clicked() {
+                            view.zoom_step(true);
+                        }
+                        let tip = crate::commands::key_tip(ui.ctx(), tl!("Zoom out ({key})"), crate::commands::ZOOM_OUT);
+                        if icons::button(ui, "zoom-out", 32.0, false, &tip).clicked() {
+                            view.zoom_step(false);
+                        }
+                        ui.add_space(8.0);
+                    });
+                });
+            if let Some(id) = page_display {
+                app.execute(id);
+            }
+        });
+}
+
 pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
+    if theme::is_mobile() {
+        mobile_right_rail(app, ui);
+        return;
+    }
     let t = Tokens::get(ui.ctx());
     let Some((index, id)) = app.active_ids() else { return };
     let Some(doc) = app.session.get(id) else { return };
@@ -700,29 +829,14 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     items.push(item(RightPanel::Tags, "tag", "Tags", None));
     let view = &mut app.views[index];
     let mut page_display = None;
-    let mobile = theme::is_mobile();
-    // Material's touch target, and a little air around it in the rail.
-    let icon = if mobile { 44.0 } else { 32.0 };
-    let small = if mobile { 40.0 } else { 30.0 };
-    let mut rail = Rail::new(egui::Id::unique("rail"))
+    let icon = 32.0;
+    let small = 30.0;
+    let rail = Rail::new(egui::Id::unique("rail"))
         .edge(Edge::End)
-        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 8)).stroke(Stroke::new(1.0, t.divider)));
-    if mobile {
-        // Fingers need a wider strip and bigger targets than a mouse.
-        rail = rail.width(72.0).button_size(48.0);
-    }
-    let rail = rail
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 8)).stroke(Stroke::new(1.0, t.divider)))
         .show(ui, &items, app.right.as_ref(), |ui| {
             // Page navigation cluster at the bottom, a panel of its own so that in a short
             // window the buttons above scroll instead of running into it (#3282).
-            // On a landscape phone the cluster itself is taller than the window, so it scrolls.
-            egui::ScrollArea::vertical()
-                .id_salt("rail_foot_scroll")
-                .max_height((ui.ctx().content_rect().height() * 0.55).max(150.0))
-                .auto_shrink([false, true])
-                .stick_to_bottom(true)
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
-                .show(ui, |ui| {
             ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let tip = crate::commands::key_tip(ui.ctx(), tl!("Zoom out ({key})"), crate::commands::ZOOM_OUT);
@@ -844,7 +958,6 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     view.page_input = view.current_page_label(labels.get(view.current).map(String::as_str));
                 }
             });
-                });
         });
     match rail.request {
         Some(RailRequest::Open(panel)) => app.choose_right_panel(Some(panel)),

@@ -88,6 +88,11 @@ pub fn set_full_screen(
     on: bool,
     lock_orientation: bool,
 ) {
+    // Full-screen reading is meaningless on the home screen: it would hide the action
+    // bar and lock the orientation with nothing to read.
+    if on && !app.has_document() {
+        return;
+    }
     state.full_screen = on;
     app.set_full_screen(ctx, on);
     app.set_viewer_mode(on);
@@ -97,7 +102,8 @@ pub fn set_full_screen(
     }
 }
 
-/// The way out of full-screen reading: back to the editor and open another file.
+/// The way out of full-screen reading: back to the home screen, with automatic
+/// orientation still enabled (rotating can enter the editor again).
 pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState) {
     let t = Tokens::get(ctx);
     egui::Area::new(egui::Id::new("pdfcraft_fullscreen_exit"))
@@ -112,7 +118,7 @@ pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state:
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if ui.add(egui::Button::new("← Volver").min_size(vec2(0.0, 36.0))).clicked() {
-                            set_full_screen(app, ctx, state, false, true);
+                            leave_viewer_to_home(app, ctx, state);
                         }
                         if ui.add(egui::Button::new("📂 Abrir").min_size(vec2(0.0, 36.0))).clicked() {
                             app.open_dialog();
@@ -120,6 +126,21 @@ pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state:
                     });
                 });
         });
+}
+
+/// Close the document and return to the home screen without locking the orientation.
+/// `portrait` is kept current so the automatic Full/Window switch does not immediately
+/// re-enter full-screen before the user rotates the device.
+fn leave_viewer_to_home(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState) {
+    let portrait = ctx.content_rect().width() <= ctx.content_rect().height();
+    state.full_screen = false;
+    state.locked = false;
+    state.portrait = Some(portrait);
+    app.set_full_screen(ctx, false);
+    app.set_viewer_mode(false);
+    app.left_open = false;
+    app.right = None;
+    app.close_all();
 }
 
 /// Shows and answers the queued rfd picks, one at a time.

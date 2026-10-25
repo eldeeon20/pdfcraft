@@ -109,7 +109,7 @@ pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state:
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if ui.add(egui::Button::new("← Volver").min_size(vec2(0.0, 36.0))).clicked() {
-                            leave_viewer_to_home(app, ctx, state);
+                            leave_viewer_to_editor(app, ctx, state);
                         }
                         if ui.add(egui::Button::new("📂 Abrir").min_size(vec2(0.0, 36.0))).clicked() {
                             app.open_dialog();
@@ -119,18 +119,16 @@ pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state:
         });
 }
 
-/// Close the document and return to the home screen without locking the orientation.
-/// `portrait` is kept current so the automatic Full/Window switch does not immediately
-/// re-enter full-screen before the user rotates the device.
-fn leave_viewer_to_home(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState) {
+/// Leave full-screen reading but keep the document open: `← Volver` returns to the
+/// editor. `portrait` is kept current so the automatic orientation switch does not
+/// immediately re-enter the viewer before the user rotates the device.
+fn leave_viewer_to_editor(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState) {
     let portrait = ctx.content_rect().width() <= ctx.content_rect().height();
     state.full_screen = false;
     state.portrait = Some(portrait);
+    state.document_open = app.has_document();
     app.set_full_screen(ctx, false);
     app.set_viewer_mode(false);
-    app.left_open = false;
-    app.right = None;
-    app.close_all();
 }
 
 /// Shows and answers the queued rfd picks, one at a time.

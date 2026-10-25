@@ -1803,7 +1803,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let mut scroll = egui::ScrollArea::both().auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource {
         drag: if middle_gesture {
             egui::scroll_area::DragScroll::Never
-        } else if app.quick_tool == QuickTool::Hand {
+        } else if app.viewer_mode || app.quick_tool == QuickTool::Hand {
             egui::scroll_area::DragScroll::Always
         } else {
             egui::scroll_area::DragScroll::OnTouch
@@ -1830,26 +1830,31 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let ppp = ui.ctx().pixels_per_point();
     let scale = view.render_scale(ppp);
     let tag = scale_tag(scale);
-    let hand = app.quick_tool == QuickTool::Hand;
+    let viewer = app.viewer_mode;
+    let hand = !viewer && app.quick_tool == QuickTool::Hand;
     let tool = app.quick_tool;
     // Text selection runs for the Select tool and for the markup tools (highlight…).
-    let selects_text = match tool {
-        QuickTool::Comment(t) => t.markup().is_some() || t == comments::CommentTool::ReplaceText,
-        QuickTool::Select => !preparing,
-        QuickTool::Redact => true,
-        QuickTool::Hand
-        | QuickTool::Measure(_)
-        | QuickTool::Crop
-        | QuickTool::Fill(_)
-        | QuickTool::Field(_)
-        | QuickTool::AddText
-        | QuickTool::EditText
-        | QuickTool::Stamp(_)
-        | QuickTool::CustomStamp(_)
-        | QuickTool::Link
-        | QuickTool::SignArea { .. }
-        | QuickTool::MarqueeZoom
-        | QuickTool::Snapshot => false,
+    let selects_text = if viewer {
+        false
+    } else {
+        match tool {
+            QuickTool::Comment(t) => t.markup().is_some() || t == comments::CommentTool::ReplaceText,
+            QuickTool::Select => !preparing,
+            QuickTool::Redact => true,
+            QuickTool::Hand
+            | QuickTool::Measure(_)
+            | QuickTool::Crop
+            | QuickTool::Fill(_)
+            | QuickTool::Field(_)
+            | QuickTool::AddText
+            | QuickTool::EditText
+            | QuickTool::Stamp(_)
+            | QuickTool::CustomStamp(_)
+            | QuickTool::Link
+            | QuickTool::SignArea { .. }
+            | QuickTool::MarqueeZoom
+            | QuickTool::Snapshot => false,
+        }
     };
     let prefs = &app.comment_prefs;
     let allowed = doc.allows_annotation();
@@ -1922,7 +1927,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         if delta != Vec2::ZERO {
             ui.scroll_with_delta_animation(delta, egui::style::ScrollAnimation::none());
         }
-        let (resp_rect, resp) = ui.allocate_exact_size(vec2(content_w, content_h), Sense::click_and_drag());
+        let sense = if viewer { Sense::hover() } else { Sense::click_and_drag() };
+        let (resp_rect, resp) = ui.allocate_exact_size(vec2(content_w, content_h), sense);
         // The Hand tool pans: the content widget takes every drag, so scroll by its delta.
         if hand {
             if resp.dragged() {
@@ -2987,6 +2993,9 @@ fn notices(
 
 /// The floating quick-action bar at the left edge of the document area.
 fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
+    if app.viewer_mode {
+        return;
+    }
     let t = Tokens::get(ui.ctx());
     let pos = area.left_top() + vec2(14.0, 14.0);
     egui::Area::new(egui::Id::new("quick-bar")).order(egui::Order::Middle).fixed_pos(pos).show(ui.ctx(), |ui| {

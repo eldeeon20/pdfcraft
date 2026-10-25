@@ -90,21 +90,35 @@ pub fn set_full_screen(
 ) {
     state.full_screen = on;
     app.set_full_screen(ctx, on);
+    app.set_viewer_mode(on);
     if lock_orientation {
         state.locked = true;
         crate::orientation::set_viewer_mode(on);
     }
 }
 
-/// A way out of full-screen reading (the action bar is hidden there).
+/// The way out of full-screen reading: back to the editor and open another file.
 pub fn render_fullscreen_exit(app: &mut PdfCraftApp, ctx: &egui::Context, state: &mut MobileState) {
+    let t = Tokens::get(ctx);
     egui::Area::new(egui::Id::new("pdfcraft_fullscreen_exit"))
-        .anchor(Align2::RIGHT_BOTTOM, [-14.0, -14.0])
+        .anchor(Align2::LEFT_TOP, [14.0, 14.0])
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            if ui.add(egui::Button::new("⤢ Window").min_size(vec2(0.0, 36.0))).clicked() {
-                set_full_screen(app, ctx, state, false, true);
-            }
+            Frame::NONE
+                .fill(t.card)
+                .stroke(Stroke::new(1.0, t.border))
+                .corner_radius(egui::CornerRadius::same(10))
+                .inner_margin(Margin::same(4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::Button::new("← Volver").min_size(vec2(0.0, 36.0))).clicked() {
+                            set_full_screen(app, ctx, state, false, true);
+                        }
+                        if ui.add(egui::Button::new("📂 Abrir").min_size(vec2(0.0, 36.0))).clicked() {
+                            app.open_dialog();
+                        }
+                    });
+                });
         });
 }
 

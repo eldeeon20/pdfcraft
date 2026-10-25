@@ -420,6 +420,8 @@ pub struct PdfCraftApp {
     pub integrated_titlebar: bool,
     pub password_prompt: Option<PasswordPrompt>,
     pub full_screen: bool,
+    /// Android viewer mode: full-screen reading with touch scrolling and no editing tools.
+    pub viewer_mode: bool,
     /// Files delivered asynchronously (web drag-and-drop, web file picker).
     pub inbox: Inbox,
     /// The browser's startup `?file=` download. Unlike a deliberate Open or drop, a late
@@ -690,6 +692,7 @@ impl PdfCraftApp {
             integrated_titlebar: false,
             password_prompt: None,
             full_screen: false,
+            viewer_mode: false,
             inbox: Default::default(),
             startup_inbox: Default::default(),
             startup_superseded: false,
@@ -1047,6 +1050,11 @@ impl PdfCraftApp {
     pub fn set_full_screen(&mut self, ctx: &egui::Context, on: bool) {
         self.full_screen = on;
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
+    }
+
+    /// Android viewer mode: the page scrolls with a touch drag and the editing tools are hidden.
+    pub fn set_viewer_mode(&mut self, on: bool) {
+        self.viewer_mode = on;
     }
 
     /// Answer the password prompt (`None` cancels).

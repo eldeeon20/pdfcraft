@@ -110,11 +110,11 @@ impl eframe::App for MobileShell {
         // 2. Canvas, panels, dialogs: the app renders itself.
         self.app.ui(ui, frame);
 
-        // 3. The in-app file picker, and the way back out of full screen.
-        mobile::render_picker(&ctx, &mut state);
+        // 3. The way back out of full screen, then the in-app file picker.
         if state.full_screen {
             mobile::render_fullscreen_exit(&mut self.app, &ctx, &mut state);
         }
+        mobile::render_picker(&ctx, &mut state);
     }
 }
 

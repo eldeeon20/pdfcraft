@@ -82,6 +82,12 @@ mod mobile {
             self
         }
 
+        /// The Android picker starts in its own default folder; accept the call so the
+        /// shared save/export code compiles, and let the user navigate from there.
+        pub fn set_directory(self, _dir: impl Into<PathBuf>) -> Self {
+            self
+        }
+
         pub fn pick_file(self) -> DialogFutureType<Option<FileHandle>> {
             Box::pin(async move {
                 one(ask(self, PendingKind::Files { multiple: false }).await?)
